@@ -1,0 +1,319 @@
+// Learning Tracker — data model
+// Hierarchy: Course -> Topic -> Quiz -> Question -> QuestionOption
+// Material hangs off Topic. Candidates are granted access per Topic.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Role {
+  candidate // employee attending courses
+  trainer   // authors courses, uploads material, allots candidates
+  admin     // super admin; sees every trainer, candidate and course
+}
+
+enum MaterialType {
+  rich_text // authored in-app, stored in Material.body
+  pdf       // uploaded PDF, viewable inline; stored at Material.fileUrl
+  slides    // uploaded pptx/odp, download-only; stored at Material.fileUrl
+  link      // external URL, stored at Material.fileUrl
+}
+
+enum QuestionType {
+  mcq_single // exactly one correct option
+  mcq_multi  // two or more correct options
+  written    // not built yet; kept here so adding it is an insert, not a migration
+}
+
+enum EnrollmentStatus {
+  pending // candidate asked to join; awaiting a trainer's decision
+  active  // approved, or created directly by a trainer allotting a topic
+}
+
+enum AttemptStatus {
+  in_progress
+  submitted
+  scored
+}
+
+enum AnswerStatus {
+  submitted      // auto-scored MCQ, final
+  pending_review // written answer awaiting a trainer
+  reviewed       // written answer graded by a trainer
+}
+
+// ---------------------------------------------------------------- people
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  role         Role     @default(candidate)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  coursesOwned     Course[]          @relation("CourseOwner")
+  enrollments      Enrollment[]
+  topicAccess      TopicAssignment[] @relation("AssignedCandidate")
+  topicsGranted    TopicAssignment[] @relation("GrantedByTrainer")
+  attempts         Attempt[]
+  feedback         CourseFeedback[]
+
+  @@index([role])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------- content
+
+model Course {
+  id          String   @id @default(uuid())
+  code        String   @unique // e.g. "PM-101"
+  title       String
+  description String?
+  // How long the course is expected to take, in weeks. Optional — used to show
+  // candidates what they are committing to, and to flag those running over.
+  durationWeeks Int?
+  isPublished   Boolean @default(false)
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User             @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  topics      Topic[]
+  enrollments Enrollment[]
+  feedback    CourseFeedback[]
+
+  @@index([ownerId])
+  @@map("courses")
+}
+
+model Topic {
+  id          String   @id @default(uuid())
+  courseId    String
+  position    Int // display order in the left-hand sidebar
+  title       String
+  description String?
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course      Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  materials   Material[]
+  quiz        Quiz?
+  assignments TopicAssignment[]
+
+  @@unique([courseId, position])
+  @@index([courseId])
+  @@map("topics")
+}
+
+model Material {
+  id      String       @id @default(uuid())
+  topicId String
+  type    MaterialType
+  title   String
+  body    String? // rich_text only: HTML/JSON authored in-app
+  // pdf / slides: object-storage key (bucket path), resolved to a signed URL
+  // at read time. link: the external URL itself.
+  fileUrl String?
+  // File metadata — populated for uploaded pdf/slides, null otherwise.
+  originalFilename String?
+  mimeType         String?
+  fileSizeBytes    BigInt?
+  position         Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, position])
+  @@index([topicId])
+  @@map("materials")
+}
+
+// ---------------------------------------------------------------- assessment
+
+model Quiz {
+  id             String   @id @default(uuid())
+  topicId        String   @unique // one quiz per topic
+  title          String
+  maxAttempts    Int? // null = unlimited retakes
+  passPercentage Decimal  @default(0) @db.Decimal(5, 2)
+  isPublished    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  topic     Topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  questions Question[]
+  attempts  Attempt[]
+
+  @@map("quizzes")
+}
+
+// Scoring rule: all-or-nothing. A question earns `marks` only if the selected
+// options exactly match the correct set — every correct option ticked and no
+// incorrect ones. Otherwise 0. No partial credit, no negative marking.
+model Question {
+  id        String       @id @default(uuid())
+  quizId    String
+  type      QuestionType @default(mcq_single)
+  prompt    String
+  marks     Int          @default(1)
+  position  Int
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  quiz    Quiz             @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options QuestionOption[]
+  answers Answer[]
+
+  @@unique([quizId, position])
+  @@index([quizId])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String @id @default(uuid())
+  questionId String
+  label      String
+  isCorrect  Boolean @default(false)
+  position   Int
+
+  question Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  selected AnswerOption[]
+
+  @@unique([questionId, position])
+  @@index([questionId])
+  @@map("question_options")
+}
+
+// ---------------------------------------------------------------- access
+
+model Enrollment {
+  id     String           @id @default(uuid())
+  userId String
+  courseId String
+  // Defaults to active so a trainer allotting a topic enrolls outright; a
+  // candidate subscribing to a course creates a pending row instead.
+  status     EnrollmentStatus @default(active)
+  enrolledAt DateTime         @default(now())
+  // Set the first time the candidate opens a topic in this course, and when
+  // every quiz allotted to them has been attempted. Null until each happens.
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([courseId, status])
+  @@map("enrollments")
+}
+
+// A trainer explicitly releasing one topic (material + quiz) to one candidate.
+model TopicAssignment {
+  id         String   @id @default(uuid())
+  userId     String
+  topicId    String
+  assignedBy String
+  assignedAt DateTime @default(now())
+
+  user    User  @relation("AssignedCandidate", fields: [userId], references: [id], onDelete: Cascade)
+  topic   Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  trainer User  @relation("GrantedByTrainer", fields: [assignedBy], references: [id], onDelete: Restrict)
+
+  @@unique([userId, topicId])
+  @@index([topicId])
+  @@map("topic_assignments")
+}
+
+/**
+ * A candidate's opinion of a course — how useful the material was, how the
+ * difficulty felt. One per candidate per course, editable afterwards, so this
+ * stays a current view rather than a thread of comments.
+ */
+model CourseFeedback {
+  id        String   @id @default(uuid())
+  userId    String
+  courseId  String
+  rating    Int // 1-5
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+  @@map("course_feedback")
+}
+
+// ---------------------------------------------------------------- submissions
+
+// Retakes: every attempt is kept. The dashboard reports the LATEST attempt
+// (highest attemptNumber with status = scored), not the best one.
+model Attempt {
+  id            String        @id @default(uuid())
+  candidateId   String
+  quizId        String
+  attemptNumber Int // 1, 2, 3 ... per candidate per quiz
+  status        AttemptStatus @default(in_progress)
+  startedAt     DateTime      @default(now())
+  submittedAt   DateTime?
+  // Stored at submit time, never recomputed on page load.
+  totalScore    Int           @default(0)
+  maxScore      Int           @default(0)
+  percentage    Decimal       @default(0) @db.Decimal(5, 2)
+
+  candidate User     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  quiz      Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  answers   Answer[]
+
+  @@unique([candidateId, quizId, attemptNumber])
+  @@index([candidateId, quizId])
+  @@index([quizId])
+  @@map("attempts")
+}
+
+model Answer {
+  id           String       @id @default(uuid())
+  attemptId    String
+  questionId   String
+  textResponse String? // written questions only
+  awardedMarks Int          @default(0)
+  isCorrect    Boolean      @default(false)
+  status       AnswerStatus @default(submitted)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  attempt         Attempt        @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question        Question       @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  selectedOptions AnswerOption[]
+
+  @@unique([attemptId, questionId])
+  @@index([questionId])
+  @@map("answers")
+}
+
+// Which options the candidate ticked. Multiple rows per Answer for mcq_multi.
+model AnswerOption {
+  answerId String
+  optionId String
+
+  answer Answer         @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  option QuestionOption @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  @@id([answerId, optionId])
+  @@index([optionId])
+  @@map("answer_options")
+}

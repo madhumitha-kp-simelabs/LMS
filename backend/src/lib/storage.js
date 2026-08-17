@@ -1,0 +1,86 @@
+import { createReadStream } from 'node:fs';
+import { mkdir, stat, unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import multer from 'multer';
+import { AppError } from '../middleware/error.js';
+
+/**
+ * Local-disk file storage.
+ *
+ * Deliberately narrow so it can be swapped for Supabase Storage or S3 by
+ * reimplementing this one module. Local disk is fine for development but does
+ * NOT survive a deploy on Render/Railway — their filesystems are ephemeral.
+ */
+
+const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+
+// mime type -> [MaterialType, extension]
+const ACCEPTED = new Map([
+  ['application/pdf', ['pdf', '.pdf']],
+  ['application/vnd.ms-powerpoint', ['slides', '.ppt']],
+  [
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ['slides', '.pptx'],
+  ],
+]);
+
+export function materialTypeFor(mimeType) {
+  return ACCEPTED.get(mimeType)?.[0] ?? null;
+}
+
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await mkdir(UPLOAD_DIR, { recursive: true });
+      cb(null, UPLOAD_DIR);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  // Never reuse the uploaded filename: it is attacker-controlled and could
+  // contain path separators. The original is kept in the database instead.
+  filename: (req, file, cb) => {
+    const ext = ACCEPTED.get(file.mimetype)?.[1] ?? '';
+    cb(null, `${randomUUID()}${ext}`);
+  },
+});
+
+export const uploadMaterial = multer({
+  storage,
+  limits: { fileSize: MAX_FILE_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (!ACCEPTED.has(file.mimetype)) {
+      return cb(new AppError(415, 'Only PDF, PPT and PPTX files are accepted'));
+    }
+    cb(null, true);
+  },
+}).single('file');
+
+/** Resolves a stored key to an absolute path, refusing anything outside the upload dir. */
+function resolveKey(key) {
+  const full = path.resolve(UPLOAD_DIR, key);
+  if (!full.startsWith(UPLOAD_DIR + path.sep)) {
+    throw new AppError(400, 'Invalid file reference');
+  }
+  return full;
+}
+
+export async function openFile(key) {
+  const full = resolveKey(key);
+  try {
+    await stat(full);
+  } catch {
+    throw new AppError(404, 'File is missing from storage');
+  }
+  return createReadStream(full);
+}
+
+export async function deleteFile(key) {
+  try {
+    await unlink(resolveKey(key));
+  } catch {
+    // Already gone — deleting the database row is what actually matters.
+  }
+}
