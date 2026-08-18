@@ -1,6 +1,17 @@
 // Learning Tracker — data model
 // Hierarchy: Course -> Topic -> Quiz -> Question -> QuestionOption
 // Material hangs off Topic. Candidates are granted access per Topic.
+//
+// Who may do what to a course is not a global role but a relationship to that
+// course, so the same trainer can lead one subject and assist on another:
+//
+//   lead     Course.owner — the trainer an admin allotted the course to. Runs
+//            it: edits the course, creates topics, hands them out, and is the
+//            only one who can publish anything to candidates.
+//   trainer  a CourseTrainer row — put on the team by an admin. Builds the
+//            material and quiz for the topics the lead assigned them, and
+//            cannot publish.
+//   admin    everything, everywhere.
 
 generator client {
   provider = "prisma-client-js"
@@ -61,7 +72,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // Courses this user leads. Named "owned" for history; `lead` is the word used
+  // everywhere the concept is talked about.
   coursesOwned     Course[]          @relation("CourseOwner")
+  courseTeams      CourseTrainer[]   @relation("TrainerOnCourse")
+  topicDuties      Topic[]           @relation("TopicDuty")
   enrollments      Enrollment[]
   topicAccess      TopicAssignment[] @relation("AssignedCandidate")
   topicsGranted    TopicAssignment[] @relation("GrantedByTrainer")
@@ -83,11 +98,15 @@ model Course {
   // candidates what they are committing to, and to flag those running over.
   durationWeeks Int?
   isPublished   Boolean @default(false)
-  ownerId     String
+  // Null until an admin allots the course to a trainer. Admins create courses
+  // as a code and a title; who runs it is a separate decision, made later on
+  // the allotment screen.
+  ownerId     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  owner       User             @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  owner       User?            @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  team        CourseTrainer[]
   topics      Topic[]
   enrollments Enrollment[]
   feedback    CourseFeedback[]
@@ -96,23 +115,51 @@ model Course {
   @@map("courses")
 }
 
+/**
+ * A trainer on a course's team, put there by an admin.
+ *
+ * The team is who the lead may hand topics to. Being on it grants no authority
+ * over the course itself — a team trainer builds what they are given and cannot
+ * publish it. The lead is NOT a row here; they are Course.ownerId.
+ */
+model CourseTrainer {
+  id       String   @id @default(uuid())
+  courseId String
+  userId   String
+  addedAt  DateTime @default(now())
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user   User   @relation("TrainerOnCourse", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@index([userId])
+  @@map("course_trainers")
+}
+
 model Topic {
   id          String   @id @default(uuid())
   courseId    String
   position    Int // display order in the left-hand sidebar
   title       String
   description String?
+  // Only the course's lead may set this. A team trainer writes the material and
+  // the quiz; releasing it to candidates is the lead's decision.
   isPublished Boolean  @default(false)
+  // The team trainer on duty for this topic — whose job it is to write the
+  // material and the quiz. Null while the lead has not handed it out yet.
+  assignedTrainerId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  course      Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  materials   Material[]
-  quiz        Quiz?
-  assignments TopicAssignment[]
+  course          Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  assignedTrainer User?             @relation("TopicDuty", fields: [assignedTrainerId], references: [id], onDelete: SetNull)
+  materials       Material[]
+  quiz            Quiz?
+  assignments     TopicAssignment[]
 
   @@unique([courseId, position])
   @@index([courseId])
+  @@index([assignedTrainerId])
   @@map("topics")
 }
 

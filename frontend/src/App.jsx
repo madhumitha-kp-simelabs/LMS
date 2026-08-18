@@ -6,6 +6,8 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import NoAccess from './pages/NoAccess';
 import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminCourses from './pages/admin/AdminCourses';
+import CourseAllotment from './pages/admin/CourseAllotment';
 import CourseList from './pages/trainer/CourseList';
 import CourseDetail from './pages/trainer/CourseDetail';
 import Inbox from './pages/trainer/Inbox';
@@ -51,6 +53,8 @@ export default function App() {
 
               <Route element={<ProtectedRoute roles={['admin']} />}>
                 <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin/courses" element={<AdminCourses />} />
+                <Route path="/admin/allotment" element={<CourseAllotment />} />
               </Route>
             </Route>
           </Route>

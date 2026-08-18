@@ -42,6 +42,20 @@ export function Input({ label, error, className = '', ...props }) {
   );
 }
 
+export function Select({ label, className = '', children, ...props }) {
+  return (
+    <label className="block">
+      {label && <span className="mb-1 block text-sm font-medium text-slate-700">{label}</span>}
+      <select
+        className={`w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+        {...props}
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
 export function Textarea({ label, className = '', ...props }) {
   return (
     <label className="block">
@@ -100,6 +114,48 @@ export function Empty({ children }) {
     </p>
   );
 }
+
+/**
+ * A card-framed data table. `headers` is a list of { label, align } — pass an
+ * empty label for an actions column that needs no heading.
+ */
+export function Table({ headers, children }) {
+  return (
+    <Card className="overflow-x-auto p-0">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 bg-slate-50/60">
+            {headers.map((h, index) => (
+              <th
+                key={h.label || index}
+                className={`px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${
+                  h.align === 'right' ? 'text-right' : 'text-left'
+                }`}
+              >
+                {h.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </Card>
+  );
+}
+
+export const Row = ({ children }) => (
+  <tr className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">{children}</tr>
+);
+
+export const Cell = ({ children, align = 'left', className = '' }) => (
+  <td
+    className={`px-5 py-3.5 ${align === 'right' ? 'text-right' : ''} ${className}`}
+    // Right-aligned cells are numbers; tabular figures keep the columns straight.
+    style={align === 'right' ? { fontVariantNumeric: 'tabular-nums' } : undefined}
+  >
+    {children}
+  </td>
+);
 
 export function Badge({ children, tone = 'slate' }) {
   const tones = {

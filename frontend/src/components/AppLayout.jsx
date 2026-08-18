@@ -22,14 +22,19 @@ const NAV_FOR_ROLE = {
     { to: '/my-courses', label: 'My courses' },
     { to: '/my-progress', label: 'My progress' },
   ],
+  // `end` where a link has routes nested under it, so the parent does not stay
+  // highlighted alongside the child.
   trainer: [
-    { to: '/trainer', label: 'Courses' },
+    { to: '/trainer', label: 'Courses', end: true },
     { to: '/trainer/inbox', label: 'Inbox', badge: 'requests' },
   ],
+  // An admin's "Courses" is the catalogue — what exists and what it is called.
+  // Trainers get the working view of the courses allotted to them.
   admin: [
-    { to: '/trainer', label: 'Courses' },
+    { to: '/admin/courses', label: 'Courses' },
+    { to: '/admin/allotment', label: 'Allotment' },
     { to: '/trainer/inbox', label: 'Inbox', badge: 'requests' },
-    { to: '/admin', label: 'Administration' },
+    { to: '/admin', label: 'Administration', end: true },
   ],
 };
 
@@ -81,7 +86,7 @@ export default function AppLayout() {
                 <NavLink
                   key={link.to}
                   to={link.to}
-                  end={link.to === '/trainer'}
+                  end={link.end}
                   className={({ isActive }) =>
                     `flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition ${
                       isActive

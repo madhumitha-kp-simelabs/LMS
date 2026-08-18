@@ -53,6 +53,9 @@ export default function CourseDetail() {
   if (!course) return <Alert>{error ?? 'Course not found'}</Alert>;
 
   const selectedTopic = course.topics.find((t) => t.id === selectedTopicId) ?? null;
+  // The API says what this viewer may do; the screen only reflects it. A team
+  // trainer sees the course but not the levers that belong to its lead.
+  const leads = course.viewer.canPublish;
 
   return (
     <div>
@@ -68,33 +71,54 @@ export default function CourseDetail() {
             <Badge tone={course.isPublished ? 'green' : 'amber'}>
               {course.isPublished ? 'Published' : 'Draft'}
             </Badge>
+            <Badge tone={leads ? 'indigo' : 'sky'}>
+              {course.viewer.relation === 'admin'
+                ? 'Administrator'
+                : leads
+                  ? 'You lead this course'
+                  : 'You are on the team'}
+            </Badge>
           </div>
           {course.description && (
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
               {course.description}
             </p>
           )}
-          <CourseDuration course={course} onChanged={load} onError={setError} />
+          {leads ? (
+            <CourseDuration course={course} onChanged={load} onError={setError} />
+          ) : (
+            course.durationWeeks && (
+              <p className="mt-3">
+                <Badge tone="amber">Duration · {course.durationWeeks} weeks</Badge>
+              </p>
+            )
+          )}
         </div>
-        <PublishToggle course={course} onChanged={load} onError={setError} />
+        <PublishToggle course={course} leads={leads} onChanged={load} onError={setError} />
       </div>
 
       <div className="mt-4">
         <Alert>{error}</Alert>
       </div>
 
-      <div className="mt-8">
-        <JoinRequests
-          courseId={course.id}
-          topicCount={course.topics.length}
-          onChanged={load}
-          onError={setError}
-        />
+      <div className="mt-8 space-y-6">
+        <CourseTeam course={course} />
+
+        {/* Approving candidates is the lead's decision, not the team's. */}
+        {leads && (
+          <JoinRequests
+            courseId={course.id}
+            topicCount={course.topics.length}
+            onChanged={load}
+            onError={setError}
+          />
+        )}
       </div>
 
       <div className="grid gap-10 lg:grid-cols-[340px_1fr]">
         <TopicSidebar
           course={course}
+          leads={leads}
           selectedTopicId={selectedTopicId}
           onSelect={setSelectedTopicId}
           onChanged={load}
@@ -104,13 +128,19 @@ export default function CourseDetail() {
         {selectedTopic ? (
           <TopicPanel
             key={selectedTopic.id}
+            course={course}
+            leads={leads}
             topic={selectedTopic}
             candidates={candidates}
             onChanged={load}
             onError={setError}
           />
         ) : (
-          <Empty>Add your first topic to start building this course.</Empty>
+          <Empty>
+            {leads
+              ? 'Add your first topic to start building this course.'
+              : 'This course has no topics yet. The lead adds them and hands them out.'}
+          </Empty>
         )}
       </div>
 
@@ -281,8 +311,23 @@ function CourseDuration({ course, onChanged, onError }) {
  * Publishing is what puts a course in the candidate-facing catalogue, so the
  * button says what actually changes rather than just "Publish".
  */
-function PublishToggle({ course, onChanged, onError }) {
+function PublishToggle({ course, leads, onChanged, onError }) {
   const [busy, setBusy] = useState(false);
+
+  // A team trainer sees where the course stands and who to ask, but no button.
+  if (!leads) {
+    return (
+      <div className="flex shrink-0 items-center gap-3">
+        <Link to={`/trainer/courses/${course.id}/progress`}>
+          <Button variant="secondary">Candidate progress →</Button>
+        </Link>
+        <p className="max-w-[15rem] text-xs leading-relaxed text-slate-500">
+          {course.isPublished ? 'Visible to candidates' : 'Hidden from candidates'} ·{' '}
+          {course.owner ? `${course.owner.fullName} publishes this course` : 'no lead yet'}
+        </p>
+      </div>
+    );
+  }
 
   async function toggle() {
     setBusy(true);
@@ -315,9 +360,139 @@ function PublishToggle({ course, onChanged, onError }) {
   );
 }
 
+/**
+ * Whose duty this topic is. The lead hands it to someone on the team; everyone
+ * else just reads who has it.
+ *
+ * The choice is limited to the team because that is the division of labour: an
+ * admin decides who is on a course, the lead decides who does what on it.
+ */
+function TopicDuty({ course, leads, topic, onChanged, onError }) {
+  const { user } = useAuth();
+  const [busy, setBusy] = useState(false);
+
+  const assigned = topic.assignedTrainer;
+  const label = !assigned
+    ? 'Nobody on duty'
+    : assigned.id === user.id
+      ? 'Your duty'
+      : `${assigned.fullName}’s duty`;
+
+  if (!leads) {
+    return (
+      <p className="flex items-center gap-2 text-sm">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Duty</span>
+        <Badge tone={!assigned ? 'amber' : assigned.id === user.id ? 'sky' : 'slate'}>
+          {label}
+        </Badge>
+      </p>
+    );
+  }
+
+  async function assign(trainerId) {
+    setBusy(true);
+    try {
+      await api(`/courses/topics/${topic.id}/duty`, {
+        method: 'PATCH',
+        body: { trainerId: trainerId || null },
+      });
+      await onChanged();
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const active = course.team.filter((member) => member.isActive);
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Duty</span>
+
+      {active.length === 0 ? (
+        <p className="text-sm text-slate-500">
+          Nobody is on this course’s team yet, so there is no one to hand it to. An administrator
+          adds trainers to the team.
+        </p>
+      ) : (
+        <>
+          <select
+            value={assigned?.id ?? ''}
+            disabled={busy}
+            onChange={(event) => assign(event.target.value)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
+          >
+            <option value="">Nobody yet</option>
+            {active.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.fullName}
+                {member.id === user.id ? ' (you)' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-slate-500">
+            {busy
+              ? 'Saving…'
+              : 'They write this topic’s material and quiz. You publish it.'}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Who is on this course: the lead, and the trainers an admin put on the team.
+ * Read-only here — the team is the admin's to change, on the allotment page.
+ */
+function CourseTeam({ course }) {
+  const { user } = useAuth();
+  const unassigned = course.topics.filter((t) => !t.assignedTrainer).length;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Course team
+          </h2>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Badge tone="indigo">
+              Lead · {course.owner?.fullName ?? 'not allotted'}
+              {course.owner?.id === user.id && ' (you)'}
+            </Badge>
+            {course.team.length === 0 ? (
+              <span className="text-sm text-slate-500">
+                No trainers on the team yet — an administrator adds them.
+              </span>
+            ) : (
+              course.team.map((member) => (
+                <Badge key={member.id} tone={member.id === user.id ? 'sky' : 'slate'}>
+                  {member.fullName}
+                  {member.id === user.id && ' (you)'}
+                </Badge>
+              ))
+            )}
+          </div>
+        </div>
+
+        {course.topics.length > 0 && (
+          <p className="text-xs text-slate-500">
+            {unassigned === 0
+              ? 'Every topic has a trainer on duty.'
+              : `${unassigned} topic${unassigned === 1 ? '' : 's'} not handed out yet.`}
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // --------------------------------------------------------------- sidebar
 
-function TopicSidebar({ course, selectedTopicId, onSelect, onChanged, onError }) {
+function TopicSidebar({ course, leads, selectedTopicId, onSelect, onChanged, onError }) {
+  const { user } = useAuth();
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ title: '', description: '' });
   const [saving, setSaving] = useState(false);
@@ -343,12 +518,15 @@ function TopicSidebar({ course, selectedTopicId, onSelect, onChanged, onError })
         <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Course content ({course.topics.length})
         </h2>
-        <button
-          onClick={() => setAdding((open) => !open)}
-          className="text-sm text-indigo-600 hover:text-indigo-700"
-        >
-          {adding ? 'Cancel' : '+ Topic'}
-        </button>
+        {/* Only the lead shapes the course; the team fills in what they are given. */}
+        {leads && (
+          <button
+            onClick={() => setAdding((open) => !open)}
+            className="text-sm text-indigo-600 hover:text-indigo-700"
+          >
+            {adding ? 'Cancel' : '+ Topic'}
+          </button>
+        )}
       </div>
 
       {adding && (
@@ -393,6 +571,24 @@ function TopicSidebar({ course, selectedTopicId, onSelect, onChanged, onError })
                   {topic.title}
                 </span>
               </div>
+              {/* Whose job this topic is — the thing a team of four needs to see. */}
+              <p className="mt-1 pl-6 text-xs">
+                {topic.assignedTrainer ? (
+                  <span
+                    className={
+                      topic.assignedTrainer.id === user.id
+                        ? 'font-medium text-sky-700'
+                        : 'text-slate-500'
+                    }
+                  >
+                    {topic.assignedTrainer.id === user.id
+                      ? 'Your duty'
+                      : topic.assignedTrainer.fullName}
+                  </span>
+                ) : (
+                  <span className="text-amber-700">Not handed out</span>
+                )}
+              </p>
               {/* Each figure wears the hue of the tab it belongs to. */}
               <p className="mt-1.5 flex flex-wrap gap-x-2 pl-6 text-xs">
                 <span className="text-sky-700">
@@ -417,10 +613,14 @@ function TopicSidebar({ course, selectedTopicId, onSelect, onChanged, onError })
 
 // ----------------------------------------------------------------- panel
 
-function TopicPanel({ topic, candidates, onChanged, onError }) {
+function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
+  const { user } = useAuth();
   // A topic has three separate jobs — write it, test it, share it. Stacking all
   // three made the page long and buried allotment at the bottom.
   const [tab, setTab] = useState('material');
+
+  // Writing this topic up is open to the lead and to whoever is on duty for it.
+  const canEdit = leads || topic.assignedTrainer?.id === user.id;
 
   // Each tab wears its section's hue, so the tab bar and the card beneath it
   // read as the same thing.
@@ -439,13 +639,18 @@ function TopicPanel({ topic, candidates, onChanged, onError }) {
       active: 'border-violet-500 text-violet-700',
       chip: 'bg-violet-100 text-violet-700',
     },
-    {
-      id: 'access',
-      label: 'Access',
-      count: topic._count?.assignments ?? 0,
-      active: 'border-emerald-500 text-emerald-700',
-      chip: 'bg-emerald-100 text-emerald-700',
-    },
+    // Who may open the topic is a decision about candidates, so it is the lead's.
+    ...(leads
+      ? [
+          {
+            id: 'access',
+            label: 'Access',
+            count: topic._count?.assignments ?? 0,
+            active: 'border-emerald-500 text-emerald-700',
+            chip: 'bg-emerald-100 text-emerald-700',
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -455,7 +660,24 @@ function TopicPanel({ topic, candidates, onChanged, onError }) {
         {topic.description && (
           <p className="mt-2 text-sm leading-relaxed text-slate-600">{topic.description}</p>
         )}
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <TopicDuty
+            course={course}
+            leads={leads}
+            topic={topic}
+            onChanged={onChanged}
+            onError={onError}
+          />
+        </div>
       </Card>
+
+      {!canEdit && (
+        <Alert tone="amber">
+          {topic.assignedTrainer
+            ? `${topic.assignedTrainer.fullName} is on duty for this topic, so it is theirs to write. You can read it here.`
+            : 'This topic has not been handed out yet, so nobody is writing it. Ask the lead to put someone on it.'}
+        </Alert>
+      )}
 
       <div className="flex gap-2 border-b border-slate-200">
         {tabs.map((item) => {

@@ -29,3 +29,11 @@ export const createTopicSchema = z.object({
 });
 
 export const updateTopicSchema = createTopicSchema.partial();
+
+/**
+ * Putting a team trainer on duty for a topic. Nullable rather than optional:
+ * clearing a duty is an explicit `null`, not an omitted field.
+ */
+export const assignDutySchema = z.object({
+  trainerId: z.string().uuid().nullable(),
+});

@@ -5,11 +5,37 @@ const prisma = new PrismaClient();
 
 // Development logins only. Change these before anything is deployed anywhere
 // other people can reach.
+//
+// The short emails are the accounts you actually log in as. Everyone below them
+// is a name on a list — enough people for the admin screens to look like the
+// real thing when marking trainers and allotting courses. Real staff will come
+// from the office SAML directory, which will replace these rows entirely.
 const SEED_USERS = [
   { email: 'admin@learningtracker.local', fullName: 'Super Admin', role: 'admin' },
   { email: 'trainer@learningtracker.local', fullName: 'Priya Menon', role: 'trainer' },
   { email: 'candidate@learningtracker.local', fullName: 'Arun Kumar', role: 'candidate' },
   { email: 'candidate2@learningtracker.local', fullName: 'Divya Nair', role: 'candidate' },
+
+  ...[
+    'Sneha Pillai',
+    'Vivek Sharma',
+    'Anjali Thomas',
+    'Karthik Raj',
+    'Meera Krishnan',
+    'Joseph Mathew',
+    'Fathima Basheer',
+    'Sandeep Gopal',
+    'Lakshmi Iyer',
+    'Nikhil Varma',
+    'Aisha Rahman',
+    'Rohit Deshpande',
+    'Keerthi Suresh',
+    'Manoj Pillai',
+  ].map((fullName) => ({
+    email: `${fullName.toLowerCase().replace(' ', '.')}@learningtracker.local`,
+    fullName,
+    role: 'candidate',
+  })),
 ];
 
 const PM_TOPICS = [

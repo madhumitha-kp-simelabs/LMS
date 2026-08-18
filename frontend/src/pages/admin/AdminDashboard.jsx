@@ -1,9 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Badge, Card, Empty, toneForScore } from '../../components/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Cell,
+  Empty,
+  Row,
+  Table,
+  toneForScore,
+} from '../../components/ui';
+import { useAdminOverview } from './useAdminOverview';
 
 const formatDate = (value) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const TABS = [
   { id: 'trainers', label: 'Trainers' },
@@ -11,17 +25,19 @@ const TABS = [
   { id: 'admins', label: 'Administrators' },
 ];
 
-/** Organisation-wide view: every course, trainer and candidate. */
+/** Organisation-wide view: every trainer, candidate and administrator. */
 export default function AdminDashboard() {
-  const [data, setData] = useState(null);
+  const { data, error, notice, busyId, run } = useAdminOverview();
   const [tab, setTab] = useState('trainers');
-  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    api('/admin/overview')
-      .then(setData)
-      .catch((err) => setError(err.message));
-  }, []);
+  const setRole = (user, role) =>
+    run(
+      user.id,
+      () => api(`/admin/users/${user.id}/role`, { method: 'PATCH', body: { role } }),
+      role === 'trainer'
+        ? `${user.fullName} is now a trainer.`
+        : `${user.fullName} is a candidate again.`,
+    );
 
   if (error) {
     return (
@@ -110,8 +126,12 @@ export default function AdminDashboard() {
         })}
       </div>
 
-      <div className="mt-6">
-        {tab === 'trainers' && <TrainerTable trainers={trainers} />}
+      <div className="mt-6 space-y-4">
+        {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
+
+        {tab === 'trainers' && (
+          <TrainerTable trainers={trainers} busyId={busyId} onSetRole={setRole} />
+        )}
         {tab === 'candidates' && <CandidateTable candidates={candidates} />}
         {tab === 'admins' && <AdminTable admins={admins} />}
       </div>
@@ -137,76 +157,116 @@ function Tile({ label, value, hint, accent }) {
   );
 }
 
-function Table({ headers, children }) {
+function TrainerTable({ trainers, busyId, onSetRole }) {
+  if (trainers.length === 0) {
+    return (
+      <Empty>
+        No trainers yet. Allotting a course to someone on the{' '}
+        <Link to="/admin/allotment" className="font-medium text-indigo-700 hover:underline">
+          allotment page
+        </Link>{' '}
+        marks them as a trainer.
+      </Empty>
+    );
+  }
+
   return (
-    <Card className="overflow-x-auto p-0">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 bg-slate-50/60">
-            {headers.map((h) => (
-              <th
-                key={h.label}
-                className={`px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 ${
-                  h.align === 'right' ? 'text-right' : 'text-left'
-                }`}
-              >
-                {h.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </Card>
+    <div className="space-y-4">
+      <Table
+        headers={[
+          { label: 'Trainer' },
+          { label: 'Leads' },
+          { label: 'On the team of' },
+          { label: 'Candidates reached', align: 'right' },
+          { label: 'Status' },
+          { label: '', align: 'right' },
+        ]}
+      >
+        {trainers.map((trainer) => (
+          <Row key={trainer.id}>
+            <Cell>
+              <span className="block font-medium text-slate-900">{trainer.fullName}</span>
+              <span className="text-xs text-slate-500">{trainer.email}</span>
+            </Cell>
+            <Cell>
+              {trainer.allotted.length === 0 ? (
+                <span className="text-sm text-slate-400">—</span>
+              ) : (
+                <span className="flex flex-wrap gap-1.5">
+                  {trainer.allotted.map((course) => (
+                    <Badge key={course.id} tone={course.isPublished ? 'indigo' : 'amber'}>
+                      {course.code}
+                    </Badge>
+                  ))}
+                </span>
+              )}
+            </Cell>
+            <Cell>
+              {trainer.assisting.length === 0 ? (
+                <span className="text-sm text-slate-400">—</span>
+              ) : (
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {trainer.assisting.map((course) => (
+                    <Badge key={course.id} tone="sky">
+                      {course.code}
+                    </Badge>
+                  ))}
+                  <span className="text-xs text-slate-500">
+                    {plural(trainer.topicDuties, 'topic')} on duty
+                  </span>
+                </span>
+              )}
+            </Cell>
+            <Cell align="right" className="text-slate-700">
+              {trainer.candidatesReached}
+            </Cell>
+            <Cell>
+              <Badge tone={trainer.isActive ? 'green' : 'rose'}>
+                {trainer.isActive ? 'Active' : 'Deactivated'}
+              </Badge>
+            </Cell>
+            <Cell align="right">
+              <UnmarkButton trainer={trainer} busyId={busyId} onSetRole={onSetRole} />
+            </Cell>
+          </Row>
+        ))}
+      </Table>
+
+      <p className="text-xs leading-relaxed text-slate-500">
+        A trainer <strong>leads</strong> the courses allotted to them — they publish the material
+        and hand each topic to someone. Courses in the third column are ones they work on under
+        another lead. Both must be cleared on the{' '}
+        <Link to="/admin/allotment" className="font-medium text-indigo-700 hover:underline">
+          allotment page
+        </Link>{' '}
+        before a trainer can be unmarked, so no course is left without a lead.
+      </p>
+    </div>
   );
 }
 
-const Cell = ({ children, align = 'left', className = '' }) => (
-  <td
-    className={`px-5 py-3.5 ${align === 'right' ? 'text-right' : ''} ${className}`}
-    style={align === 'right' ? { fontVariantNumeric: 'tabular-nums' } : undefined}
-  >
-    {children}
-  </td>
-);
-
-function TrainerTable({ trainers }) {
-  if (trainers.length === 0) return <Empty>No trainer accounts yet.</Empty>;
+/**
+ * Putting a trainer back to a candidate. Blocked while they still lead a course
+ * or sit on a team — the API refuses either way, so the button says why first.
+ */
+function UnmarkButton({ trainer, busyId, onSetRole }) {
+  const blocked =
+    trainer.courses > 0
+      ? `Allot the ${plural(trainer.courses, 'course')} they lead to someone else first`
+      : trainer.assisting.length > 0
+        ? `Take them off the team of ${plural(trainer.assisting.length, 'course')} first`
+        : null;
 
   return (
-    <Table
-      headers={[
-        { label: 'Trainer' },
-        { label: 'Courses', align: 'right' },
-        { label: 'Candidates reached', align: 'right' },
-        { label: 'Joined' },
-        { label: 'Status' },
-      ]}
+    <Button
+      variant="secondary"
+      className="whitespace-nowrap px-3 py-1.5"
+      disabled={busyId !== null || blocked !== null}
+      title={blocked ?? undefined}
+      onClick={() => onSetRole(trainer, 'candidate')}
     >
-      {trainers.map((trainer) => (
-        <tr
-          key={trainer.id}
-          className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60"
-        >
-          <Cell>
-            <span className="block font-medium text-slate-900">{trainer.fullName}</span>
-            <span className="text-xs text-slate-500">{trainer.email}</span>
-          </Cell>
-          <Cell align="right" className="text-slate-700">
-            {trainer.courses}
-          </Cell>
-          <Cell align="right" className="text-slate-700">
-            {trainer.candidatesReached}
-          </Cell>
-          <Cell className="text-slate-500">{formatDate(trainer.createdAt)}</Cell>
-          <Cell>
-            <Badge tone={trainer.isActive ? 'green' : 'rose'}>
-              {trainer.isActive ? 'Active' : 'Deactivated'}
-            </Badge>
-          </Cell>
-        </tr>
-      ))}
-    </Table>
+      {busyId === trainer.id ? 'Saving…' : 'Unmark trainer'}
+    </Button>
   );
 }
 
@@ -219,7 +279,7 @@ function AdminTable({ admins }) {
         headers={[{ label: 'Administrator' }, { label: 'Joined' }, { label: 'Status' }]}
       >
         {admins.map((admin) => (
-          <tr key={admin.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
+          <Row key={admin.id}>
             <Cell>
               <span className="block font-medium text-slate-900">{admin.fullName}</span>
               <span className="text-xs text-slate-500">{admin.email}</span>
@@ -230,7 +290,7 @@ function AdminTable({ admins }) {
                 {admin.isActive ? 'Active' : 'Deactivated'}
               </Badge>
             </Cell>
-          </tr>
+          </Row>
         ))}
       </Table>
 
@@ -257,10 +317,7 @@ function CandidateTable({ candidates }) {
       ]}
     >
       {candidates.map((candidate) => (
-        <tr
-          key={candidate.id}
-          className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60"
-        >
+        <Row key={candidate.id}>
           <Cell>
             <span className="block font-medium text-slate-900">{candidate.fullName}</span>
             <span className="text-xs text-slate-500">{candidate.email}</span>
@@ -285,7 +342,7 @@ function CandidateTable({ candidates }) {
             )}
           </Cell>
           <Cell className="text-slate-500">{formatDate(candidate.lastActive)}</Cell>
-        </tr>
+        </Row>
       ))}
     </Table>
   );

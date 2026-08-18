@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
-import { assertTopicAccess } from '../courses/courses.service.js';
+import {
+  assertTopicLead,
+  assertTopicRead,
+  assertTopicWrite,
+  changesPublishState,
+} from '../courses/courses.service.js';
 import { extractText, uploadDocument } from '../../lib/document.js';
 import { parseQuestions } from './question-parser.js';
 import { questionSchema, updateQuizSchema } from './quizzes.schema.js';
@@ -18,10 +23,14 @@ function deriveType(options) {
   return options.filter((o) => o.isCorrect).length > 1 ? 'mcq_multi' : 'mcq_single';
 }
 
-async function assertQuizAccess(user, quizId) {
+/**
+ * A quiz inherits its topic's rules: the trainer on duty for the topic writes
+ * the questions, and only the lead publishes. Pass the check that fits the verb.
+ */
+async function assertQuizAccess(user, quizId, check = assertTopicWrite) {
   const quiz = await prisma.quiz.findUnique({ where: { id: quizId } });
   if (!quiz) throw new AppError(404, 'Quiz not found');
-  await assertTopicAccess(user, quiz.topicId);
+  await check(user, quiz.topicId);
   return quiz;
 }
 
@@ -48,7 +57,7 @@ const questionShape = {
 router.post(
   '/topics/:topicId',
   handle(async (req, res) => {
-    const topic = await assertTopicAccess(req.user, req.params.topicId);
+    const topic = await assertTopicWrite(req.user, req.params.topicId);
 
     const existing = await prisma.quiz.findUnique({ where: { topicId: topic.id } });
     if (existing) return res.json({ quiz: existing });
@@ -63,7 +72,8 @@ router.post(
 router.get(
   '/:quizId',
   handle(async (req, res) => {
-    await assertQuizAccess(req.user, req.params.quizId);
+    // Anyone on the course may look at a quiz, even if it is not their duty.
+    await assertQuizAccess(req.user, req.params.quizId, assertTopicRead);
 
     const quiz = await prisma.quiz.findUnique({
       where: { id: req.params.quizId },
@@ -79,8 +89,15 @@ router.get(
 router.patch(
   '/:quizId',
   handle(async (req, res) => {
-    await assertQuizAccess(req.user, req.params.quizId);
     const input = updateQuizSchema.parse(req.body);
+
+    // Renaming a quiz or changing its pass mark is the on-duty trainer's to do;
+    // putting it in front of candidates is the lead's.
+    await assertQuizAccess(
+      req.user,
+      req.params.quizId,
+      changesPublishState(input) ? assertTopicLead : assertTopicWrite,
+    );
 
     if (input.isPublished) {
       const questions = await prisma.question.count({ where: { quizId: req.params.quizId } });

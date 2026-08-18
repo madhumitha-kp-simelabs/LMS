@@ -1,15 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Badge, Button, Card, Empty, Input, Textarea } from '../../components/ui';
+import { Alert, Badge, Card, Empty } from '../../components/ui';
 
 export default function CourseList() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ code: '', title: '', description: '', durationWeeks: '' });
-  const [saving, setSaving] = useState(false);
 
   async function load() {
     try {
@@ -26,91 +23,25 @@ export default function CourseList() {
     load();
   }, []);
 
-  async function handleCreate(event) {
-    event.preventDefault();
-    setError(null);
-    setSaving(true);
-
-    try {
-      await api('/courses', {
-        method: 'POST',
-        body: {
-          ...form,
-          // An empty box means "not set", not zero.
-          durationWeeks: form.durationWeeks ? Number(form.durationWeeks) : null,
-        },
-      });
-      setForm({ code: '', title: '', description: '', durationWeeks: '' });
-      setShowForm(false);
-      await load();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   if (loading) return <p className="text-sm text-slate-500">Loading courses…</p>;
 
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900">My courses</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Create a course, add topics, upload material, and allot candidates.
-          </p>
-        </div>
-        <Button onClick={() => setShowForm((open) => !open)}>
-          {showForm ? 'Cancel' : 'New course'}
-        </Button>
+      <div>
+        <h1 className="text-xl font-semibold text-slate-900">My courses</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Open a course to add topics, upload material, build quizzes and allot candidates.
+        </p>
       </div>
 
       <div className="mt-6 space-y-4">
         <Alert>{error}</Alert>
 
-        {showForm && (
-          <Card>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-[160px_1fr_150px]">
-                <Input
-                  label="Course code"
-                  placeholder="PM-102"
-                  required
-                  value={form.code}
-                  onChange={(e) => setForm({ ...form, code: e.target.value })}
-                />
-                <Input
-                  label="Title"
-                  placeholder="Advanced Project Management"
-                  required
-                  value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
-                />
-                <Input
-                  label="Duration (weeks)"
-                  type="number"
-                  min={1}
-                  max={104}
-                  placeholder="Optional"
-                  value={form.durationWeeks}
-                  onChange={(e) => setForm({ ...form, durationWeeks: e.target.value })}
-                />
-              </div>
-              <Textarea
-                label="Description"
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-              <Button type="submit" disabled={saving}>
-                {saving ? 'Creating…' : 'Create course'}
-              </Button>
-            </form>
-          </Card>
-        )}
-
         {courses.length === 0 ? (
-          <Empty>No courses yet. Create your first one to get started.</Empty>
+          <Empty>
+            No courses allotted to you yet. An administrator adds courses and decides who runs
+            them — once one is yours it appears here.
+          </Empty>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {courses.map((course) => (
@@ -126,15 +57,33 @@ export default function CourseList() {
                       </p>
                       <h2 className="mt-0.5 font-semibold text-slate-900">{course.title}</h2>
                     </div>
-                    <Badge tone={course.isPublished ? 'green' : 'amber'}>
-                      {course.isPublished ? 'Published' : 'Draft'}
-                    </Badge>
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <Badge tone={course.isPublished ? 'green' : 'amber'}>
+                        {course.isPublished ? 'Published' : 'Draft'}
+                      </Badge>
+                      {/* Leading a course and assisting on one are different jobs. */}
+                      {course.relation === 'lead' ? (
+                        <Badge tone="indigo">You lead</Badge>
+                      ) : (
+                        course.relation === 'trainer' && <Badge tone="sky">On the team</Badge>
+                      )}
+                    </div>
                   </div>
                   {course.description && (
                     <p className="mt-2 line-clamp-2 text-sm text-slate-600">{course.description}</p>
                   )}
                   <p className="mt-4 flex flex-wrap gap-x-3 text-xs">
                     <span className="text-violet-700">{course._count.topics} topics</span>
+                    {course.relation === 'trainer' && (
+                      <>
+                        <span className="text-slate-300">·</span>
+                        <span className={course.myTopics > 0 ? 'text-sky-700' : 'text-amber-700'}>
+                          {course.myTopics > 0
+                            ? `${course.myTopics} yours`
+                            : 'none assigned to you'}
+                        </span>
+                      </>
+                    )}
                     <span className="text-slate-300">·</span>
                     <span className="text-sky-700">{course._count.enrollments} candidates</span>
                     {course.durationWeeks && (

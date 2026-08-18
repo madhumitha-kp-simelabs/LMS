@@ -3,7 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
 import { deleteFile, materialTypeFor, openFile, uploadMaterial } from '../../lib/storage.js';
-import { assertTopicAccess } from '../courses/courses.service.js';
+import { assertTopicWrite } from '../courses/courses.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -25,7 +25,8 @@ router.post(
   requireRole('trainer', 'admin'),
   receiveFile,
   handle(async (req, res) => {
-    await assertTopicAccess(req.user, req.params.topicId);
+    // Uploading material is the job of whoever is on duty for the topic.
+    await assertTopicWrite(req.user, req.params.topicId);
     if (!req.file) throw new AppError(400, 'No file was uploaded');
 
     const last = await prisma.material.findFirst({
@@ -93,7 +94,7 @@ router.delete(
     const material = await prisma.material.findUnique({ where: { id: req.params.materialId } });
     if (!material) throw new AppError(404, 'Material not found');
 
-    await assertTopicAccess(req.user, material.topicId);
+    await assertTopicWrite(req.user, material.topicId);
     await prisma.material.delete({ where: { id: material.id } });
     if (material.fileUrl) await deleteFile(material.fileUrl);
 

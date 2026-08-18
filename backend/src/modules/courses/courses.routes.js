@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import {
-  createCourseSchema,
+  assignDutySchema,
   createTopicSchema,
   updateCourseAdminSchema,
   updateCourseSchema,
@@ -24,13 +24,9 @@ router.get(
   }),
 );
 
-router.post(
-  '/',
-  handle(async (req, res) => {
-    const input = createCourseSchema.parse(req.body);
-    res.status(201).json({ course: await courses.createCourse(req.user, input) });
-  }),
-);
+// Creating a course lives at POST /api/admin/courses — an admin decides which
+// courses exist and what they are called. Trainers fill in the ones they are
+// allotted: topics, material, quizzes, and the course's own duration and code.
 
 router.get(
   '/:courseId',
@@ -62,7 +58,7 @@ router.delete(
 router.get(
   '/:courseId/progress',
   handle(async (req, res) => {
-    await courses.assertCourseAccess(req.user, req.params.courseId);
+    await courses.assertCourseRead(req.user, req.params.courseId);
     res.json(await courseProgress(req.params.courseId));
   }),
 );
@@ -71,7 +67,7 @@ router.get(
 router.get(
   '/:courseId/feedback',
   handle(async (req, res) => {
-    await courses.assertCourseAccess(req.user, req.params.courseId);
+    await courses.assertCourseRead(req.user, req.params.courseId);
 
     const entries = await prisma.courseFeedback.findMany({
       where: { courseId: req.params.courseId },
@@ -107,6 +103,18 @@ router.patch(
   handle(async (req, res) => {
     const input = updateTopicSchema.parse(req.body);
     res.json({ topic: await courses.updateTopic(req.user, req.params.topicId, input) });
+  }),
+);
+
+/**
+ * The lead putting one of their team on duty for a topic — "you take this one".
+ * A null trainerId hands it back to nobody.
+ */
+router.patch(
+  '/topics/:topicId/duty',
+  handle(async (req, res) => {
+    const { trainerId } = assignDutySchema.parse(req.body);
+    res.json({ topic: await courses.assignTopicDuty(req.user, req.params.topicId, trainerId) });
   }),
 );
 

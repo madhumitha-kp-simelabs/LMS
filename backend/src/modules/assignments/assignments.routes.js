@@ -3,7 +3,15 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
-import { assertCourseAccess, assertTopicAccess } from '../courses/courses.service.js';
+// Everything about candidates — approving them, allotting topics to them — is
+// the course lead's call. A team trainer builds content; they do not decide who
+// sees it. Read-only views stay open to the whole team.
+import {
+  assertCourseLead,
+  assertCourseRead,
+  assertTopicLead,
+  assertTopicRead,
+} from '../courses/courses.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -31,7 +39,7 @@ router.get(
 router.get(
   '/topics/:topicId/assignments',
   handle(async (req, res) => {
-    await assertTopicAccess(req.user, req.params.topicId);
+    await assertTopicRead(req.user, req.params.topicId);
 
     const assignments = await prisma.topicAssignment.findMany({
       where: { topicId: req.params.topicId },
@@ -45,7 +53,7 @@ router.get(
 router.post(
   '/topics/:topicId/assignments',
   handle(async (req, res) => {
-    const topic = await assertTopicAccess(req.user, req.params.topicId);
+    const topic = await assertTopicLead(req.user, req.params.topicId);
     const { candidateIds } = allotSchema.parse(req.body);
 
     const candidates = await prisma.user.findMany({
@@ -85,7 +93,7 @@ router.post(
 router.delete(
   '/topics/:topicId/assignments/:userId',
   handle(async (req, res) => {
-    await assertTopicAccess(req.user, req.params.topicId);
+    await assertTopicLead(req.user, req.params.topicId);
 
     await prisma.topicAssignment.deleteMany({
       where: { topicId: req.params.topicId, userId: req.params.userId },
@@ -131,7 +139,7 @@ router.get(
 router.get(
   '/courses/:courseId/requests',
   handle(async (req, res) => {
-    await assertCourseAccess(req.user, req.params.courseId);
+    await assertCourseRead(req.user, req.params.courseId);
 
     const requests = await prisma.enrollment.findMany({
       where: { courseId: req.params.courseId, status: 'pending' },
@@ -152,7 +160,7 @@ const decisionSchema = z.object({
 router.post(
   '/courses/:courseId/requests/:userId/approve',
   handle(async (req, res) => {
-    await assertCourseAccess(req.user, req.params.courseId);
+    await assertCourseLead(req.user, req.params.courseId);
     const { allotAllTopics } = decisionSchema.parse(req.body ?? {});
 
     const request = await prisma.enrollment.findUnique({
@@ -185,7 +193,7 @@ router.post(
 router.delete(
   '/courses/:courseId/requests/:userId',
   handle(async (req, res) => {
-    await assertCourseAccess(req.user, req.params.courseId);
+    await assertCourseLead(req.user, req.params.courseId);
 
     const { count } = await prisma.enrollment.deleteMany({
       where: { userId: req.params.userId, courseId: req.params.courseId, status: 'pending' },
@@ -200,7 +208,7 @@ router.delete(
 router.post(
   '/courses/:courseId/assignments',
   handle(async (req, res) => {
-    await assertCourseAccess(req.user, req.params.courseId);
+    await assertCourseLead(req.user, req.params.courseId);
     const { candidateIds } = allotSchema.parse(req.body);
 
     const topics = await prisma.topic.findMany({
