@@ -8,6 +8,7 @@ import NoAccess from './pages/NoAccess';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminCourses from './pages/admin/AdminCourses';
 import CourseAllotment from './pages/admin/CourseAllotment';
+import CandidateDetail from './pages/admin/CandidateDetail';
 import CourseList from './pages/trainer/CourseList';
 import CourseDetail from './pages/trainer/CourseDetail';
 import Inbox from './pages/trainer/Inbox';
@@ -44,7 +45,7 @@ export default function App() {
                 <Route path="/my-progress" element={<MyProgress />} />
               </Route>
 
-              <Route element={<ProtectedRoute roles={['trainer', 'admin']} />}>
+              <Route element={<ProtectedRoute roles={['trainer', 'lead', 'admin']} />}>
                 <Route path="/trainer" element={<CourseList />} />
                 <Route path="/trainer/inbox" element={<Inbox />} />
                 <Route path="/trainer/courses/:courseId" element={<CourseDetail />} />
@@ -55,6 +56,7 @@ export default function App() {
                 <Route path="/admin" element={<AdminDashboard />} />
                 <Route path="/admin/courses" element={<AdminCourses />} />
                 <Route path="/admin/allotment" element={<CourseAllotment />} />
+                <Route path="/admin/candidates/:userId" element={<CandidateDetail />} />
               </Route>
             </Route>
           </Route>

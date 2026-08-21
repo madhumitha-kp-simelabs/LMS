@@ -6,7 +6,7 @@ import { AppError } from '../../middleware/error.js';
 import {
   assertTopicLead,
   assertTopicRead,
-  assertTopicWrite,
+  assertQuizWrite,
   changesPublishState,
 } from '../courses/courses.service.js';
 import { extractText, uploadDocument } from '../../lib/document.js';
@@ -16,7 +16,7 @@ import { questionSchema, updateQuizSchema } from './quizzes.schema.js';
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-router.use(requireAuth, requireRole('trainer', 'admin'));
+router.use(requireAuth, requireRole('trainer', 'lead', 'admin'));
 
 /** A question is single-answer or multi-answer purely by how many options are correct. */
 function deriveType(options) {
@@ -27,7 +27,7 @@ function deriveType(options) {
  * A quiz inherits its topic's rules: the trainer on duty for the topic writes
  * the questions, and only the lead publishes. Pass the check that fits the verb.
  */
-async function assertQuizAccess(user, quizId, check = assertTopicWrite) {
+async function assertQuizAccess(user, quizId, check = assertQuizWrite) {
   const quiz = await prisma.quiz.findUnique({ where: { id: quizId } });
   if (!quiz) throw new AppError(404, 'Quiz not found');
   await check(user, quiz.topicId);
@@ -57,7 +57,7 @@ const questionShape = {
 router.post(
   '/topics/:topicId',
   handle(async (req, res) => {
-    const topic = await assertTopicWrite(req.user, req.params.topicId);
+    const topic = await assertQuizWrite(req.user, req.params.topicId);
 
     const existing = await prisma.quiz.findUnique({ where: { topicId: topic.id } });
     if (existing) return res.json({ quiz: existing });
@@ -96,7 +96,7 @@ router.patch(
     await assertQuizAccess(
       req.user,
       req.params.quizId,
-      changesPublishState(input) ? assertTopicLead : assertTopicWrite,
+      changesPublishState(input) ? assertTopicLead : assertQuizWrite,
     );
 
     if (input.isPublished) {

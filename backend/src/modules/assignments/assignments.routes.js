@@ -9,14 +9,16 @@ import { AppError } from '../../middleware/error.js';
 import {
   assertCourseLead,
   assertCourseRead,
+  assertNotCourseStaff,
   assertTopicLead,
   assertTopicRead,
+  removeFromCourse,
 } from '../courses/courses.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-router.use(requireAuth, requireRole('trainer', 'admin'));
+router.use(requireAuth, requireRole('trainer', 'lead', 'admin'));
 
 const allotSchema = z.object({
   candidateIds: z.array(z.string().uuid()).min(1, 'Pick at least one candidate'),
@@ -63,6 +65,8 @@ router.post(
     if (candidates.length !== candidateIds.length) {
       throw new AppError(422, 'One or more of those accounts is not an active candidate');
     }
+
+    await assertNotCourseStaff(topic.courseId, candidateIds);
 
     // Allotting a topic implies membership of its course, so keep Enrollment in
     // step rather than letting a candidate hold a topic in a course they are
@@ -170,6 +174,8 @@ router.post(
       throw new AppError(404, 'No pending request from that candidate');
     }
 
+    await assertNotCourseStaff(req.params.courseId, [req.params.userId]);
+
     const topics = allotAllTopics
       ? await prisma.topic.findMany({ where: { courseId: req.params.courseId }, select: { id: true } })
       : [];
@@ -187,6 +193,22 @@ router.post(
     ]);
 
     res.json({ approved: true, topicsAllotted: topics.length });
+  }),
+);
+
+/**
+ * Takes a candidate off a course altogether — their place and every topic
+ * released to them. Attempts they have already sat are left alone; those are a
+ * record of what happened, not an entitlement.
+ *
+ * Withdrawing an approved place is deliberately not something a candidate can
+ * do to themselves (see /learn), so this is the route that message points at.
+ */
+router.delete(
+  '/courses/:courseId/enrollments/:userId',
+  handle(async (req, res) => {
+    await removeFromCourse(req.user, req.params.courseId, req.params.userId);
+    res.status(204).end();
   }),
 );
 
@@ -210,6 +232,7 @@ router.post(
   handle(async (req, res) => {
     await assertCourseLead(req.user, req.params.courseId);
     const { candidateIds } = allotSchema.parse(req.body);
+    await assertNotCourseStaff(req.params.courseId, candidateIds);
 
     const topics = await prisma.topic.findMany({
       where: { courseId: req.params.courseId },

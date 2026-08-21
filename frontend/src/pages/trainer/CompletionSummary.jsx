@@ -15,14 +15,19 @@ const formatDate = (value) =>
 /** Whole weeks between a date and now. */
 const weeksSince = (date) => Math.floor((Date.now() - new Date(date)) / (7 * 24 * 60 * 60 * 1000));
 
-export default function CompletionSummary({ courseId, durationWeeks, onError }) {
-  const [data, setData] = useState(null);
+export default function CompletionSummary({ courseId, durationWeeks, onError, progress, showLink = true }) {
+  const [fetched, setFetched] = useState(null);
 
+  // The progress page has already loaded this; asking again would be a second
+  // round trip for the same rows.
   useEffect(() => {
+    if (progress) return;
     api(`/courses/${courseId}/progress`)
-      .then(setData)
+      .then(setFetched)
       .catch((err) => onError(err.message));
-  }, [courseId, onError]);
+  }, [courseId, onError, progress]);
+
+  const data = progress ?? fetched;
 
   if (!data || data.candidates.length === 0) return null;
 
@@ -47,12 +52,14 @@ export default function CompletionSummary({ courseId, durationWeeks, onError }) 
             {summary.candidates === 1 ? '' : 's'} have finished every quiz allotted to them.
           </p>
         </div>
-        <Link
-          to={`/trainer/courses/${courseId}/progress`}
-          className="text-sm text-indigo-600 hover:text-indigo-700"
-        >
-          Full progress →
-        </Link>
+        {showLink && (
+          <Link
+            to={`/trainer/courses/${courseId}/progress`}
+            className="text-sm text-indigo-600 hover:text-indigo-700"
+          >
+            Full progress →
+          </Link>
+        )}
       </div>
 
       <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">

@@ -1,15 +1,20 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Badge, Button, Card, Cell, Empty, Row, Select, Table } from '../../components/ui';
+import { Alert, Avatar, Badge, Button, Card, Empty, Select } from '../../components/ui';
 import { useAdminOverview } from './useAdminOverview';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
- * Who runs what. One form allots a course to a person; naming someone from the
- * candidate list marks them a trainer as part of the same action, which is why
- * there is no separate "make trainer" step on this screen.
+ * Who runs what.
+ *
+ * The form at the top is for the first allotment; every course below is a card
+ * you can open and change, so adjusting a lead or a team never means scrolling
+ * back up to re-pick a course you are already looking at.
+ *
+ * Naming someone from the candidate list marks them a trainer as part of the
+ * same action, which is why there is no separate "make trainer" step here.
  */
 export default function CourseAllotment() {
   const { data, error, notice, busyId, run } = useAdminOverview();
@@ -27,13 +32,15 @@ export default function CourseAllotment() {
 
   if (!data) return <p className="text-sm text-slate-500">Loading…</p>;
 
-  const { courses, trainers, candidates } = data;
+  const { courses, leads, trainers, candidates } = data;
 
-  // Anyone a course can be handed to. Deactivated accounts are left out —
-  // the API refuses them, so offering them would only produce an error.
+  // Leads run courses, trainers work on them, and a candidate can become
+  // either by being picked. Deactivated accounts are left out — the API
+  // refuses them, so offering them would only produce an error.
+  const activeLeads = leads.filter((l) => l.isActive);
   const activeTrainers = trainers.filter((t) => t.isActive);
   const activeCandidates = candidates.filter((c) => c.isActive);
-  const people = [...activeTrainers, ...activeCandidates];
+  const people = [...activeLeads, ...activeTrainers, ...activeCandidates];
 
   const allot = (courseId, userId) => {
     const course = courses.find((c) => c.id === courseId);
@@ -41,15 +48,13 @@ export default function CourseAllotment() {
     const promoted = activeCandidates.some((c) => c.id === userId);
 
     return run(
-      'allot',
+      `allot-${courseId}`,
       () => api('/admin/allotments', { method: 'POST', body: { courseId, userId } }),
       promoted
-        ? `${person.fullName} is now a trainer, running ${course.code}.`
-        : `${course.code} is now run by ${person.fullName}.`,
+        ? `${person.fullName} is now a course lead, running ${course.code}.`
+        : `${course.code} is now led by ${person.fullName}.`,
     );
   };
-
-  const waiting = courses.filter((c) => !c.trainer);
 
   const addToTeam = (course, person) =>
     run(
@@ -65,6 +70,11 @@ export default function CourseAllotment() {
       `${person.fullName} is off the ${course.code} team.`,
     );
 
+  const waiting = courses.filter((c) => !c.trainer);
+  // Distinct people actually running something — one person leading three
+  // courses is one lead.
+  const leadCount = new Set(courses.filter((c) => c.trainer).map((c) => c.trainer.id)).size;
+
   return (
     <div>
       <Heading />
@@ -74,30 +84,50 @@ export default function CourseAllotment() {
 
         <AllotmentForm
           courses={courses}
-          trainers={activeTrainers}
+          leads={activeLeads}
           candidates={activeCandidates}
-          busy={busyId === 'allot'}
+          busyId={busyId}
           onAllot={allot}
         />
 
         <section>
-          <h2 className="text-lg font-semibold text-slate-900">Course teams</h2>
-          <p className="mt-0.5 text-sm text-slate-500">
-            {plural(courses.length, 'course')} across {plural(activeTrainers.length, 'lead')}
-            {waiting.length > 0 && `, ${waiting.length} still waiting for one`}. The lead divides
-            their course’s topics among the team.
-          </p>
-
-          <div className="mt-4">
-            <AllotmentTable
-              courses={courses}
-              trainers={activeTrainers}
-              candidates={activeCandidates}
-              busyId={busyId}
-              onAdd={addToTeam}
-              onRemove={removeFromTeam}
-            />
+          <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+            <h2 className="text-lg font-semibold text-slate-900">Courses</h2>
+            <p className="text-sm text-slate-500">
+              {plural(courses.length, 'course')} · {plural(leadCount, 'lead')}
+              {waiting.length > 0 && (
+                <span className="font-medium text-amber-700"> · {waiting.length} without a lead</span>
+              )}
+            </p>
           </div>
+
+          {courses.length === 0 ? (
+            <div className="mt-4">
+              <Empty>
+                No courses yet. Add one on the{' '}
+                <Link to="/admin/courses" className="font-medium text-indigo-700 hover:underline">
+                  courses page
+                </Link>
+                .
+              </Empty>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {courses.map((course) => (
+                <CourseCard
+                  key={course.id}
+                  course={course}
+                  leads={activeLeads}
+                  trainers={activeTrainers}
+                  candidates={activeCandidates}
+                  busyId={busyId}
+                  onAllot={allot}
+                  onAdd={addToTeam}
+                  onRemove={removeFromTeam}
+                />
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </div>
@@ -108,33 +138,25 @@ const Heading = () => (
   <div>
     <h1 className="text-2xl font-semibold text-slate-900">Course allotment</h1>
     <p className="mt-1 text-sm text-slate-500">
-      Decide who runs each course. The trainer you allot it to owns its topics, material and
-      quizzes, approves join requests, and allots topics to candidates.
+      Decide who leads each course and who works on it. The lead owns the course’s topics, material
+      and quizzes, publishes them, and hands each topic to someone on the team.
     </p>
   </div>
 );
 
+// ------------------------------------------------------------------- form
+
 /** Course + person, in that order: you pick the work, then who does it. */
-function AllotmentForm({ courses, trainers, candidates, busy, onAllot }) {
+function AllotmentForm({ courses, leads, candidates, busyId, onAllot }) {
   const [courseId, setCourseId] = useState('');
   const [userId, setUserId] = useState('');
 
   const course = courses.find((c) => c.id === courseId);
   const promoting = candidates.some((c) => c.id === userId);
 
-  if (courses.length === 0) {
-    return (
-      <Empty>
-        There are no courses to allot yet. Add one on the{' '}
-        <Link to="/admin/courses" className="font-medium text-indigo-700 hover:underline">
-          courses page
-        </Link>{' '}
-        first.
-      </Empty>
-    );
-  }
+  if (courses.length === 0) return null;
 
-  // Courses with nobody on them come first: they are what this screen is for.
+  // Courses with nobody on them come first: they are what this form is for.
   const waiting = courses.filter((c) => !c.trainer);
   const running = courses.filter((c) => c.trainer);
 
@@ -153,7 +175,7 @@ function AllotmentForm({ courses, trainers, candidates, busy, onAllot }) {
     <Card accent="indigo">
       <h2 className="text-lg font-semibold text-slate-900">Allot a course</h2>
 
-      <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-4 space-y-3">
         <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
           <Select
             label="Course"
@@ -165,7 +187,7 @@ function AllotmentForm({ courses, trainers, candidates, busy, onAllot }) {
               Choose a course…
             </option>
             {waiting.length > 0 && (
-              <optgroup label="Not allotted yet">
+              <optgroup label="Without a lead">
                 {waiting.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.code} — {c.title}
@@ -185,30 +207,31 @@ function AllotmentForm({ courses, trainers, candidates, busy, onAllot }) {
           </Select>
 
           <PersonSelect
-            trainers={trainers}
+            label="Lead"
+            required
+            staff={leads}
+            staffLabel="Leads"
             candidates={candidates}
+            becomes="leads"
             value={userId}
             onChange={(event) => setUserId(event.target.value)}
-            placeholder="Choose who will run it…"
+            placeholder="Choose who will lead it…"
           />
 
-          <Button type="submit" disabled={busy || !courseId || !userId}>
-            {busy ? 'Allotting…' : 'Allot course'}
+          <Button type="submit" disabled={busyId !== null || !courseId || !userId}>
+            {busyId === `allot-${courseId}` ? 'Allotting…' : 'Allot course'}
           </Button>
         </div>
 
         <p className="text-xs leading-relaxed text-slate-500">
-          {!course && <>Pick a course to see who runs it today. </>}
-          {course && course.trainer && (
+          {!course && 'Pick a course to see who leads it today. '}
+          {course?.trainer && (
             <>
-              {course.code} is currently run by <strong>{course.trainer.fullName}</strong>.
-              Allotting it moves the course and everything in it; candidates already enrolled stay
-              enrolled.{' '}
+              {course.code} is led by <strong>{course.trainer.fullName}</strong>. Allotting it moves
+              the course and everything in it; candidates already enrolled stay enrolled.{' '}
             </>
           )}
-          {course && !course.trainer && (
-            <>{course.code} has nobody running it yet. </>
-          )}
+          {course && !course.trainer && <>{course.code} has no lead yet. </>}
           {promoting && 'The person you have chosen is a candidate, and will be marked as a trainer.'}
         </p>
       </form>
@@ -216,174 +239,248 @@ function AllotmentForm({ courses, trainers, candidates, busy, onAllot }) {
   );
 }
 
-function AllotmentTable({ courses, trainers, candidates, busyId, onAdd, onRemove }) {
-  if (courses.length === 0) return <Empty>No courses yet.</Empty>;
+// ------------------------------------------------------------------ cards
+
+/**
+ * One course, read-only until you press Edit. Keeping the controls behind that
+ * press is what makes a list of courses scannable — a page of open dropdowns
+ * reads as a form, not as a summary of who runs what.
+ */
+function CourseCard({ course, leads, trainers, candidates, busyId, onAllot, onAdd, onRemove }) {
+  const [editing, setEditing] = useState(false);
+  const busy = busyId === `team-${course.id}` || busyId === `allot-${course.id}`;
 
   return (
-    <Table
-      headers={[
-        { label: 'Course' },
-        { label: 'Lead' },
-        { label: 'Team' },
-        { label: 'Topics', align: 'right' },
-        { label: 'Candidates', align: 'right' },
-        { label: 'Status' },
-      ]}
-    >
-      {courses.map((course) => (
-        <Row key={course.id}>
-          <Cell>
-            <span className="block text-xs font-semibold tracking-wide text-indigo-600">
+    <Card accent={course.trainer ? 'indigo' : 'amber'} className="p-0">
+      <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold tracking-wide text-indigo-700">
               {course.code}
             </span>
-            <span className="font-medium text-slate-900">{course.title}</span>
-          </Cell>
-          <Cell>
-            {course.trainer ? (
-              <span className="text-slate-700">{course.trainer.fullName}</span>
-            ) : (
-              <Badge tone="amber">Not allotted</Badge>
-            )}
-          </Cell>
-          <Cell>
-            <TeamCell
-              course={course}
-              trainers={trainers}
-              candidates={candidates}
-              busy={busyId === `team-${course.id}`}
-              onAdd={onAdd}
-              onRemove={onRemove}
-            />
-          </Cell>
-          <Cell align="right" className="text-slate-700">
-            {course.topics}
-            {course.unassignedTopics > 0 && (
-              <span className="ml-1 text-xs text-amber-700">
-                ({course.unassignedTopics} unassigned)
-              </span>
-            )}
-          </Cell>
-          <Cell align="right" className="text-slate-700">
-            {course.candidates}
-            {course.pendingRequests > 0 && (
-              <span className="ml-1 text-xs text-amber-700">
-                (+{course.pendingRequests} waiting)
-              </span>
-            )}
-          </Cell>
-          <Cell>
             <Badge tone={course.isPublished ? 'green' : 'amber'}>
               {course.isPublished ? 'Published' : 'Draft'}
             </Badge>
-          </Cell>
-        </Row>
-      ))}
-    </Table>
+            {!course.trainer && <Badge tone="rose">Needs a lead</Badge>}
+          </div>
+
+          <h3 className="mt-1.5 font-semibold text-slate-900">{course.title}</h3>
+
+          <p className="mt-1 flex flex-wrap gap-x-2 text-xs text-slate-500">
+            <span>{plural(course.topics, 'topic')}</span>
+            {course.unassignedTopics > 0 && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="text-amber-700">{course.unassignedTopics} not handed out</span>
+              </>
+            )}
+            <span className="text-slate-300">·</span>
+            <span>{plural(course.candidates, 'candidate')}</span>
+            {course.pendingRequests > 0 && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="text-amber-700">{course.pendingRequests} waiting to join</span>
+              </>
+            )}
+          </p>
+        </div>
+
+        <Button
+          variant={editing ? 'primary' : 'secondary'}
+          size="sm"
+          className="shrink-0"
+          onClick={() => setEditing((open) => !open)}
+        >
+          {editing ? 'Done' : 'Edit'}
+        </Button>
+      </div>
+
+      <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-4">
+        {editing ? (
+          <CourseEditor
+            course={course}
+            leads={leads}
+            trainers={trainers}
+            candidates={candidates}
+            busy={busy}
+            onAllot={onAllot}
+            onAdd={onAdd}
+            onRemove={onRemove}
+          />
+        ) : (
+          <CourseSummary course={course} />
+        )}
+      </div>
+    </Card>
   );
 }
 
-/**
- * The trainers working under a course's lead. Adding someone who is still a
- * candidate marks them a trainer, exactly as allotting does.
- */
-function TeamCell({ course, trainers, candidates, busy, onAdd, onRemove }) {
+/** Who is on the course, at a glance. */
+function CourseSummary({ course }) {
+  return (
+    <div className="flex flex-wrap items-start gap-x-10 gap-y-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Lead</p>
+        <div className="mt-1.5">
+          {course.trainer ? (
+            <span className="flex items-center gap-2">
+              <Avatar name={course.trainer.fullName} tone="indigo" />
+              <span className="text-sm font-medium text-slate-900">{course.trainer.fullName}</span>
+            </span>
+          ) : (
+            <span className="text-sm text-amber-700">Nobody yet</span>
+          )}
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Team ({course.team.length})
+        </p>
+        <div className="mt-1.5">
+          {course.team.length === 0 ? (
+            <span className="text-sm text-slate-400">No trainers added</span>
+          ) : (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              {course.team.map((member) => (
+                <span key={member.id} className="flex items-center gap-2">
+                  <Avatar
+                    name={member.fullName}
+                    tone={member.isActive ? 'sky' : 'amber'}
+                    size="sm"
+                  />
+                  <span className="text-sm text-slate-700">{member.fullName}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The same two facts, as controls. */
+function CourseEditor({ course, leads, trainers, candidates, busy, onAllot, onAdd, onRemove }) {
   const onTeam = new Set(course.team.map((m) => m.id));
 
-  // The lead cannot also be on their own team, and nobody twice.
+  // The lead cannot also sit on their own team, and nobody appears twice.
   const spare = (people) => people.filter((p) => !onTeam.has(p.id) && p.id !== course.trainer?.id);
   const spareTrainers = spare(trainers);
   const spareCandidates = spare(candidates);
+  const nobodyLeft = spareTrainers.length + spareCandidates.length === 0;
 
   return (
-    <div className="min-w-[15rem] space-y-2">
-      {course.team.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {course.team.map((member) => (
-            <span
-              key={member.id}
-              className={`inline-flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-xs font-medium ring-1 ${
-                member.isActive
-                  ? 'bg-slate-100 text-slate-700 ring-slate-200'
-                  : 'bg-rose-50 text-rose-700 ring-rose-200'
-              }`}
-            >
-              {member.fullName}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onRemove(course, member)}
-                title={`Take ${member.fullName} off this team`}
-                className="rounded-full px-1 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {!course.trainer ? (
-        <p className="text-xs text-slate-400">Allot a lead first</p>
-      ) : spareTrainers.length + spareCandidates.length === 0 ? (
-        <p className="text-xs text-slate-400">Everyone is already on it</p>
-      ) : (
-        <select
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div>
+        <PersonSelect
+          label="Lead"
+          staff={leads.filter((l) => l.id !== course.trainer?.id)}
+          staffLabel="Leads"
+          becomes="leads"
+          candidates={candidates}
           value=""
           disabled={busy}
-          onChange={(event) => {
-            const person = [...spareTrainers, ...spareCandidates].find(
-              (p) => p.id === event.target.value,
-            );
-            if (person) onAdd(course, person);
-          }}
-          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
-        >
-          <option value="">{busy ? 'Saving…' : '+ Add a trainer'}</option>
-          {spareTrainers.length > 0 && (
-            <optgroup label="Trainers">
-              {spareTrainers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.fullName}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {spareCandidates.length > 0 && (
-            <optgroup label="Candidates — will be marked as trainers">
-              {spareCandidates.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.fullName}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-      )}
+          onChange={(event) => onAllot(course.id, event.target.value)}
+          placeholder={course.trainer ? `${course.trainer.fullName} — change to…` : 'Choose a lead…'}
+        />
+        <p className="mt-1.5 text-xs text-slate-500">
+          Moves the course and everything in it. Enrolled candidates stay enrolled.
+        </p>
+      </div>
+
+      <div>
+        <p className="mb-1 text-sm font-medium text-slate-700">Team</p>
+
+        {course.team.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {course.team.map((member) => (
+              <span
+                key={member.id}
+                className={`inline-flex items-center gap-1 rounded-full py-1 pl-2.5 pr-1 text-xs font-medium ring-1 ${
+                  member.isActive
+                    ? 'bg-white text-slate-700 ring-slate-300'
+                    : 'bg-rose-50 text-rose-700 ring-rose-200'
+                }`}
+              >
+                {member.fullName}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onRemove(course, member)}
+                  title={`Take ${member.fullName} off this team`}
+                  className="grid h-4 w-4 place-items-center rounded-full text-slate-400 transition hover:bg-slate-200 hover:text-slate-800 disabled:opacity-40"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {!course.trainer ? (
+          <p className="text-xs text-slate-500">Give the course a lead first.</p>
+        ) : nobodyLeft ? (
+          <p className="text-xs text-slate-500">Everyone is already on this course.</p>
+        ) : (
+          <PersonSelect
+            staff={spareTrainers}
+            staffLabel="Trainers"
+            becomes="trainers"
+            candidates={spareCandidates}
+            value=""
+            disabled={busy}
+            onChange={(event) => {
+              const person = [...spareTrainers, ...spareCandidates].find(
+                (p) => p.id === event.target.value,
+              );
+              if (person) onAdd(course, person);
+            }}
+            placeholder={busy ? 'Saving…' : '+ Add a trainer'}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
 /**
- * The people a course can be handed to, in two groups: those already training,
- * and candidates who would be marked as trainers by the act of choosing them.
+ * The people a slot can be filled from, in two groups: those who already hold
+ * the role, and candidates who would be given it by the act of choosing them.
+ *
+ * Leads and trainers are separate account types, so a lead never appears in the
+ * team picker and a trainer never in the lead picker — the API refuses both, and
+ * offering them would only produce an error.
  */
-function PersonSelect({ trainers, candidates, value, onChange, placeholder }) {
+function PersonSelect({
+  label,
+  staff,
+  staffLabel,
+  candidates,
+  becomes,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  required,
+}) {
   return (
-    <Select label="Trainer" required value={value} onChange={onChange}>
+    <Select label={label} value={value} required={required} disabled={disabled} onChange={onChange}>
       <option value="" disabled>
         {placeholder}
       </option>
-      {trainers.length > 0 && (
-        <optgroup label="Trainers">
-          {trainers.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.fullName} — {plural(t.courses, 'course')}
+      {staff.length > 0 && (
+        <optgroup label={staffLabel}>
+          {staff.map((person) => (
+            <option key={person.id} value={person.id}>
+              {person.fullName}
+              {person.courses > 0 ? ` — ${plural(person.courses, 'course')}` : ''}
             </option>
           ))}
         </optgroup>
       )}
       {candidates.length > 0 && (
-        <optgroup label="Candidates — will be marked as trainers">
+        <optgroup label={`Candidates — will be made ${becomes}`}>
           {candidates.map((c) => (
             <option key={c.id} value={c.id}>
               {c.fullName}

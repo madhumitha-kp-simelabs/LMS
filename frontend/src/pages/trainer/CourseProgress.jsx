@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Card, Empty, toneForScore } from '../../components/ui';
+import CompletionSummary from './CompletionSummary';
 
 const formatDate = (value) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
@@ -12,6 +13,7 @@ export default function CourseProgress() {
   const [data, setData] = useState(null);
   const [course, setCourse] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [removing, setRemoving] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -22,6 +24,20 @@ export default function CourseProgress() {
       })
       .catch((err) => setError(err.message));
   }, [courseId]);
+
+  async function remove(candidate) {
+    setRemoving(candidate.id);
+    setError(null);
+    try {
+      await api(`/allot/courses/${courseId}/enrollments/${candidate.id}`, { method: 'DELETE' });
+      setData(await api(`/courses/${courseId}/progress`));
+      setExpanded(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRemoving(null);
+    }
+  }
 
   if (error) return <Alert>{error}</Alert>;
   if (!data) return <p className="text-sm text-slate-500">Loading progress…</p>;
@@ -61,6 +77,18 @@ export default function CourseProgress() {
             />
           </div>
 
+          {/* Who has finished and who is running late. Fed the rows this page
+              already loaded, so it costs no extra request. */}
+          <div className="mt-6">
+            <CompletionSummary
+              courseId={courseId}
+              durationWeeks={course?.durationWeeks}
+              progress={data}
+              showLink={false}
+              onError={setError}
+            />
+          </div>
+
           {summary.weakestTopics.length > 0 && (
             <Card accent="amber" className="mt-6">
               <h2 className="font-semibold text-slate-900">Where the group struggles</h2>
@@ -94,6 +122,8 @@ export default function CourseProgress() {
                 candidate={candidate}
                 open={expanded === candidate.id}
                 onToggle={() => setExpanded(expanded === candidate.id ? null : candidate.id)}
+                removing={removing === candidate.id}
+                onRemove={() => remove(candidate)}
               />
             ))}
           </div>
@@ -119,7 +149,7 @@ function Tile({ label, value, accent }) {
   );
 }
 
-function CandidateRow({ candidate, open, onToggle }) {
+function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
   const status = candidate.completedAt
     ? { tone: 'green', label: `Completed ${formatDate(candidate.completedAt)}` }
     : candidate.startedAt
@@ -239,6 +269,17 @@ function CandidateRow({ candidate, open, onToggle }) {
                 Enrolled {formatDate(candidate.enrolledAt)} · {candidate.topicsAllotted} topic
                 {candidate.topicsAllotted === 1 ? '' : 's'} allotted
               </p>
+
+              {/* The only way to withdraw an approved place — a candidate cannot
+                  do it themselves, and /learn tells them to ask their trainer. */}
+              <button
+                onClick={onRemove}
+                disabled={removing}
+                className="mt-3 text-xs text-rose-600 underline transition hover:text-rose-700 disabled:opacity-50"
+                title="Takes them off the course and withdraws every topic released to them. Attempts already sat are kept."
+              >
+                {removing ? 'Removing…' : 'Remove from this course'}
+              </button>
             </div>
           </div>
         </div>

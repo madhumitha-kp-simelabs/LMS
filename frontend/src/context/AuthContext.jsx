@@ -7,6 +7,7 @@ const AuthContext = createContext(null);
 export const HOME_FOR_ROLE = {
   candidate: '/home',
   trainer: '/trainer',
+  lead: '/trainer',
   admin: '/admin',
 };
 

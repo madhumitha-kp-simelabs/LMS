@@ -5,7 +5,6 @@ import { useAuth } from '../../context/AuthContext';
 import QuizSection from './QuizSection';
 import JoinRequests from './JoinRequests';
 import CourseFeedbackPanel from './CourseFeedbackPanel';
-import CompletionSummary from './CompletionSummary';
 import {
   Alert,
   Badge,
@@ -63,59 +62,49 @@ export default function CourseDetail() {
         ← All courses
       </Link>
 
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-x-10 gap-y-4 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6">
-        <div className="min-w-0">
-          <CourseCode course={course} onChanged={load} onError={setError} />
-          <div className="mt-1 flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold text-slate-900">{course.title}</h1>
-            <Badge tone={course.isPublished ? 'green' : 'amber'}>
-              {course.isPublished ? 'Published' : 'Draft'}
-            </Badge>
-            <Badge tone={leads ? 'indigo' : 'sky'}>
-              {course.viewer.relation === 'admin'
-                ? 'Administrator'
-                : leads
-                  ? 'You lead this course'
-                  : 'You are on the team'}
-            </Badge>
-          </div>
-          {course.description && (
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-              {course.description}
-            </p>
-          )}
-          {leads ? (
-            <CourseDuration course={course} onChanged={load} onError={setError} />
-          ) : (
-            course.durationWeeks && (
-              <p className="mt-3">
-                <Badge tone="amber">Duration · {course.durationWeeks} weeks</Badge>
+      {/* Title, standing, team and actions in one band. They were three stacked
+          full-width blocks, which pushed the actual course content below the
+          fold on a laptop. */}
+      <div className="mt-3 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 px-6 py-5">
+        <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <CourseCode course={course} onChanged={load} onError={setError} />
+              <h1 className="text-xl font-semibold text-slate-900">{course.title}</h1>
+              <Badge tone={course.isPublished ? 'green' : 'amber'}>
+                {course.isPublished ? 'Published' : 'Draft'}
+              </Badge>
+            </div>
+            {course.description && (
+              <p className="mt-1 line-clamp-1 max-w-2xl text-sm text-slate-600">
+                {course.description}
               </p>
-            )
-          )}
+            )}
+          </div>
+
+          <PublishToggle course={course} leads={leads} onChanged={load} onError={setError} />
         </div>
-        <PublishToggle course={course} leads={leads} onChanged={load} onError={setError} />
+
+        <CourseMeta course={course} leads={leads} onChanged={load} onError={setError} />
       </div>
 
-      <div className="mt-4">
+      <div className="mt-3">
         <Alert>{error}</Alert>
       </div>
 
-      <div className="mt-8 space-y-6">
-        <CourseTeam course={course} />
-
-        {/* Approving candidates is the lead's decision, not the team's. */}
-        {leads && (
+      {/* Approving candidates is the lead's decision, not the team's. */}
+      {leads && (
+        <div className="mt-4">
           <JoinRequests
             courseId={course.id}
             topicCount={course.topics.length}
             onChanged={load}
             onError={setError}
           />
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="grid gap-10 lg:grid-cols-[340px_1fr]">
+      <div className="mt-6 grid gap-8 lg:grid-cols-[320px_1fr]">
         <TopicSidebar
           course={course}
           leads={leads}
@@ -144,12 +133,7 @@ export default function CourseDetail() {
         )}
       </div>
 
-      <div className="mt-6 space-y-6">
-        <CompletionSummary
-          courseId={course.id}
-          durationWeeks={course.durationWeeks}
-          onError={setError}
-        />
+      <div className="mt-6">
         <CourseFeedbackPanel courseId={course.id} onError={setError} />
       </div>
     </div>
@@ -260,7 +244,7 @@ function CourseDuration({ course, onChanged, onError }) {
 
   if (editing) {
     return (
-      <form onSubmit={save} className="mt-3 flex items-center gap-2">
+      <form onSubmit={save} className="flex items-center gap-2">
         <input
           autoFocus
           type="number"
@@ -292,13 +276,13 @@ function CourseDuration({ course, onChanged, onError }) {
   return (
     <button
       onClick={() => setEditing(true)}
-      className="group mt-3 flex items-center gap-2 text-sm"
+      className="group flex items-center gap-1.5 text-xs"
       title="Set the expected course duration"
     >
       {course.durationWeeks ? (
-        <Badge tone="amber">Duration · {course.durationWeeks} weeks</Badge>
+        <span className="text-slate-600">{course.durationWeeks} weeks</span>
       ) : (
-        <span className="text-slate-500">No duration set</span>
+        <span className="text-slate-400">no duration set</span>
       )}
       <span className="text-xs text-slate-400 opacity-0 transition group-hover:opacity-100">
         edit
@@ -361,131 +345,167 @@ function PublishToggle({ course, leads, onChanged, onError }) {
 }
 
 /**
- * Whose duty this topic is. The lead hands it to someone on the team; everyone
- * else just reads who has it.
+ * How a topic's work is divided. A topic is two jobs — writing the reading
+ * material and setting the quiz — and the lead may hand them to different
+ * people, or to the same one, or to nobody yet.
  *
- * The choice is limited to the team because that is the division of labour: an
- * admin decides who is on a course, the lead decides who does what on it.
+ * The choice is limited to the course's team because that is the division of
+ * labour: an admin decides who is on a course, the lead decides who does what.
  */
 function TopicDuty({ course, leads, topic, onChanged, onError }) {
   const { user } = useAuth();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(null);
 
-  const assigned = topic.assignedTrainer;
-  const label = !assigned
-    ? 'Nobody on duty'
-    : assigned.id === user.id
-      ? 'Your duty'
-      : `${assigned.fullName}’s duty`;
+  const jobs = [
+    { key: 'material', label: 'Material', person: topic.materialTrainer, tone: 'sky' },
+    { key: 'quiz', label: 'Quiz', person: topic.quizTrainer, tone: 'violet' },
+  ];
 
-  if (!leads) {
-    return (
-      <p className="flex items-center gap-2 text-sm">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Duty</span>
-        <Badge tone={!assigned ? 'amber' : assigned.id === user.id ? 'sky' : 'slate'}>
-          {label}
-        </Badge>
-      </p>
-    );
-  }
-
-  async function assign(trainerId) {
-    setBusy(true);
+  async function assign(key, trainerId) {
+    setBusy(key);
     try {
       await api(`/courses/topics/${topic.id}/duty`, {
         method: 'PATCH',
-        body: { trainerId: trainerId || null },
+        // Only the half being changed is sent, so the other stays put.
+        body: { [key]: trainerId || null },
       });
       await onChanged();
     } catch (err) {
       onError(err.message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
+  }
+
+  if (!leads) {
+    return (
+      <div className="flex flex-wrap gap-x-8 gap-y-2">
+        {jobs.map(({ key, label, person, tone }) => (
+          <p key={key} className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {label}
+            </span>
+            <Badge tone={!person ? 'amber' : person.id === user.id ? tone : 'slate'}>
+              {!person
+                ? 'Nobody yet'
+                : person.id === user.id
+                  ? 'Yours to write'
+                  : person.fullName}
+            </Badge>
+          </p>
+        ))}
+      </div>
+    );
   }
 
   const active = course.team.filter((member) => member.isActive);
 
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Duty</span>
+  if (active.length === 0) {
+    return (
+      <p className="text-sm text-slate-500">
+        Nobody is on this course’s team yet, so there is no one to hand the work to. An
+        administrator adds trainers to the team.
+      </p>
+    );
+  }
 
-      {active.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          Nobody is on this course’s team yet, so there is no one to hand it to. An administrator
-          adds trainers to the team.
-        </p>
-      ) : (
-        <>
-          <select
-            value={assigned?.id ?? ''}
-            disabled={busy}
-            onChange={(event) => assign(event.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
-          >
-            <option value="">Nobody yet</option>
-            {active.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.fullName}
-                {member.id === user.id ? ' (you)' : ''}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-slate-500">
-            {busy
-              ? 'Saving…'
-              : 'They write this topic’s material and quiz. You publish it.'}
-          </span>
-        </>
-      )}
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {jobs.map(({ key, label, person }) => (
+          <label key={key} className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {label} — who writes it
+            </span>
+            <select
+              value={person?.id ?? ''}
+              disabled={busy !== null}
+              onChange={(event) => assign(key, event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
+            >
+              <option value="">Nobody yet</option>
+              {active.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.fullName}
+                  {member.id === user.id ? ' (you)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+
+      <p className="text-xs text-slate-500">
+        {busy
+          ? 'Saving…'
+          : 'Each person can only touch the half you gave them. Publishing stays with you.'}
+      </p>
     </div>
   );
 }
 
 /**
- * Who is on this course: the lead, and the trainers an admin put on the team.
- * Read-only here — the team is the admin's to change, on the allotment page.
+ * One line of course facts: where you stand on it, how long it runs, who is on
+ * the team, and how much work is still unhanded. These were three separate
+ * blocks — a sentence, a badge and a full-width card — for four short facts.
  */
-function CourseTeam({ course }) {
+function CourseMeta({ course, leads, onChanged, onError }) {
   const { user } = useAuth();
-  const unassigned = course.topics.filter((t) => !t.assignedTrainer).length;
+
+  // Counted in halves, since material and quiz are handed out separately.
+  const open = course.topics.reduce(
+    (n, t) => n + (t.materialTrainer ? 0 : 1) + (t.quizTrainer ? 0 : 1),
+    0,
+  );
+
+  const standing =
+    course.viewer.relation === 'admin'
+      ? 'Administrator'
+      : leads
+        ? 'You lead this'
+        : 'You are on the team';
 
   return (
-    <Card>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Course team
-          </h2>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge tone="indigo">
-              Lead · {course.owner?.fullName ?? 'not allotted'}
-              {course.owner?.id === user.id && ' (you)'}
-            </Badge>
-            {course.team.length === 0 ? (
-              <span className="text-sm text-slate-500">
-                No trainers on the team yet — an administrator adds them.
-              </span>
-            ) : (
-              course.team.map((member) => (
-                <Badge key={member.id} tone={member.id === user.id ? 'sky' : 'slate'}>
-                  {member.fullName}
-                  {member.id === user.id && ' (you)'}
-                </Badge>
-              ))
-            )}
-          </div>
-        </div>
+    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-indigo-100/80 pt-3 text-xs">
+      <span
+        className={`flex items-center gap-1.5 font-medium ${leads ? 'text-indigo-700' : 'text-sky-700'}`}
+      >
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${leads ? 'bg-indigo-500' : 'bg-sky-500'}`}
+          aria-hidden
+        />
+        {standing}
+      </span>
 
-        {course.topics.length > 0 && (
-          <p className="text-xs text-slate-500">
-            {unassigned === 0
-              ? 'Every topic has a trainer on duty.'
-              : `${unassigned} topic${unassigned === 1 ? '' : 's'} not handed out yet.`}
-          </p>
+      {leads ? (
+        <CourseDuration course={course} onChanged={onChanged} onError={onError} />
+      ) : (
+        course.durationWeeks && <span className="text-slate-500">{course.durationWeeks} weeks</span>
+      )}
+
+      <span className="flex flex-wrap items-center gap-1.5">
+        <span className="font-semibold uppercase tracking-wide text-slate-400">Team</span>
+        <span className="text-slate-700">
+          {course.owner ? `${course.owner.fullName}${course.owner.id === user.id ? ' (you)' : ''}` : 'no lead'}
+        </span>
+        <span className="text-slate-300">·</span>
+        {course.team.length === 0 ? (
+          <span className="text-amber-700">no trainers yet</span>
+        ) : (
+          <span className="text-slate-700">
+            {course.team
+              .map((m) => `${m.fullName}${m.id === user.id ? ' (you)' : ''}`)
+              .join(', ')}
+          </span>
         )}
-      </div>
-    </Card>
+      </span>
+
+      {course.topics.length > 0 && (
+        <span className={open === 0 ? 'text-emerald-700' : 'text-amber-700'}>
+          {open === 0 ? 'all work handed out' : `${open} job${open === 1 ? '' : 's'} unhanded`}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -571,23 +591,11 @@ function TopicSidebar({ course, leads, selectedTopicId, onSelect, onChanged, onE
                   {topic.title}
                 </span>
               </div>
-              {/* Whose job this topic is — the thing a team of four needs to see. */}
-              <p className="mt-1 pl-6 text-xs">
-                {topic.assignedTrainer ? (
-                  <span
-                    className={
-                      topic.assignedTrainer.id === user.id
-                        ? 'font-medium text-sky-700'
-                        : 'text-slate-500'
-                    }
-                  >
-                    {topic.assignedTrainer.id === user.id
-                      ? 'Your duty'
-                      : topic.assignedTrainer.fullName}
-                  </span>
-                ) : (
-                  <span className="text-amber-700">Not handed out</span>
-                )}
+              {/* Whose job each half is — the thing a team of four needs to see. */}
+              <p className="mt-1 flex flex-wrap gap-x-2 pl-6 text-xs">
+                <DutyName label="M" person={topic.materialTrainer} me={user.id} />
+                <span className="text-slate-300">·</span>
+                <DutyName label="Q" person={topic.quizTrainer} me={user.id} />
               </p>
               {/* Each figure wears the hue of the tab it belongs to. */}
               <p className="mt-1.5 flex flex-wrap gap-x-2 pl-6 text-xs">
@@ -613,14 +621,34 @@ function TopicSidebar({ course, leads, selectedTopicId, onSelect, onChanged, onE
 
 // ----------------------------------------------------------------- panel
 
+/**
+ * One half of a topic's duty, in the sidebar. "M" for the reading material,
+ * "Q" for the quiz — two names per row would not fit, and the initial plus a
+ * name is enough to see who owes what.
+ */
+function DutyName({ label, person, me }) {
+  const mine = person?.id === me;
+
+  return (
+    <span className={mine ? 'font-medium text-sky-700' : person ? 'text-slate-500' : 'text-amber-700'}>
+      <span className="text-slate-400">{label}</span> {mine ? 'you' : (person?.fullName ?? '—')}
+    </span>
+  );
+}
+
 function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
   const { user } = useAuth();
   // A topic has three separate jobs — write it, test it, share it. Stacking all
   // three made the page long and buried allotment at the bottom.
   const [tab, setTab] = useState('material');
 
-  // Writing this topic up is open to the lead and to whoever is on duty for it.
-  const canEdit = leads || topic.assignedTrainer?.id === user.id;
+  // Each half is written by whoever holds that duty, so the two tabs unlock
+  // independently: the person setting the quiz cannot touch the reading, and
+  // the other way round.
+  const canWrite = {
+    material: leads || topic.materialTrainer?.id === user.id,
+    quiz: leads || topic.quizTrainer?.id === user.id,
+  };
 
   // Each tab wears its section's hue, so the tab bar and the card beneath it
   // read as the same thing.
@@ -671,11 +699,11 @@ function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
         </div>
       </Card>
 
-      {!canEdit && (
+      {!canWrite[tab] && tab !== 'access' && (
         <Alert tone="amber">
-          {topic.assignedTrainer
-            ? `${topic.assignedTrainer.fullName} is on duty for this topic, so it is theirs to write. You can read it here.`
-            : 'This topic has not been handed out yet, so nobody is writing it. Ask the lead to put someone on it.'}
+          {(tab === 'material' ? topic.materialTrainer : topic.quizTrainer)
+            ? `${(tab === 'material' ? topic.materialTrainer : topic.quizTrainer).fullName} is on duty for this topic’s ${tab}, so it is theirs to write. You can read it here.`
+            : `Nobody has been given this topic’s ${tab} yet. Ask the lead to put someone on it.`}
         </Alert>
       )}
 

@@ -3,6 +3,40 @@ import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Card, Empty } from '../../components/ui';
 
+/**
+ * What a course is to the person looking at it. Leading one and working on
+ * somebody else's are different jobs, so they get different colours — the card's
+ * top edge carries it, which makes a grid of courses sortable at a glance.
+ */
+const MY_ROLE = {
+  lead: {
+    accent: 'indigo',
+    label: 'You lead this course',
+    text: 'text-indigo-700',
+    dot: 'bg-indigo-500',
+  },
+  trainer: {
+    accent: 'sky',
+    label: 'You are on the team',
+    text: 'text-sky-700',
+    dot: 'bg-sky-500',
+  },
+};
+
+function MyRole({ relation }) {
+  // An admin browsing the list is a bystander on every course; a label on all of
+  // them would be noise rather than information.
+  const role = MY_ROLE[relation];
+  if (!role) return null;
+
+  return (
+    <p className={`mt-2 flex items-center gap-1.5 text-xs font-medium ${role.text}`}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${role.dot}`} aria-hidden />
+      {role.label}
+    </p>
+  );
+}
+
 export default function CourseList() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,28 +81,25 @@ export default function CourseList() {
             {courses.map((course) => (
               <Link key={course.id} to={`/trainer/courses/${course.id}`}>
                 <Card
-                  accent="indigo"
-                  className="h-full transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
+                  accent={MY_ROLE[course.relation]?.accent ?? 'indigo'}
+                  className="h-full transition hover:-translate-y-0.5 hover:shadow-md"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-base font-semibold tracking-wide text-indigo-600">
                         {course.code}
                       </p>
                       <h2 className="mt-0.5 font-semibold text-slate-900">{course.title}</h2>
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1.5">
-                      <Badge tone={course.isPublished ? 'green' : 'amber'}>
-                        {course.isPublished ? 'Published' : 'Draft'}
-                      </Badge>
-                      {/* Leading a course and assisting on one are different jobs. */}
-                      {course.relation === 'lead' ? (
-                        <Badge tone="indigo">You lead</Badge>
-                      ) : (
-                        course.relation === 'trainer' && <Badge tone="sky">On the team</Badge>
-                      )}
-                    </div>
+                    {/* Only the course's own state belongs here. What the course
+                        is to you is said once, below, in words. */}
+                    <Badge tone={course.isPublished ? 'green' : 'amber'}>
+                      {course.isPublished ? 'Published' : 'Draft'}
+                    </Badge>
                   </div>
+
+                  <MyRole relation={course.relation} />
+
                   {course.description && (
                     <p className="mt-2 line-clamp-2 text-sm text-slate-600">{course.description}</p>
                   )}

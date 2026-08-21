@@ -2,14 +2,18 @@ import { z } from 'zod';
 import { createCourseSchema } from '../courses/courses.schema.js';
 
 /**
- * Marking someone a trainer, or putting them back to a candidate.
+ * Moving someone between the three working roles.
+ *
+ *   candidate  attends courses
+ *   trainer    writes the topics a lead hands them
+ *   lead       runs courses and publishes them
  *
  * `admin` is deliberately absent: minting an administrator goes through
  * POST /auth/users, so it always comes with a deliberate account creation
  * rather than a dropdown change on a list of names.
  */
 export const setUserRoleSchema = z.object({
-  role: z.enum(['candidate', 'trainer']),
+  role: z.enum(['candidate', 'trainer', 'lead']),
 });
 
 /**

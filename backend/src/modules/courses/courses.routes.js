@@ -15,7 +15,7 @@ const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 // Everything here is trainer/admin territory. Candidates use /api/learn.
-router.use(requireAuth, requireRole('trainer', 'admin'));
+router.use(requireAuth, requireRole('trainer', 'lead', 'admin'));
 
 router.get(
   '/',
@@ -107,14 +107,14 @@ router.patch(
 );
 
 /**
- * The lead putting one of their team on duty for a topic — "you take this one".
- * A null trainerId hands it back to nobody.
+ * The lead handing out a topic's two jobs. Send either half, or both; a null
+ * hands that half back to nobody.
  */
 router.patch(
   '/topics/:topicId/duty',
   handle(async (req, res) => {
-    const { trainerId } = assignDutySchema.parse(req.body);
-    res.json({ topic: await courses.assignTopicDuty(req.user, req.params.topicId, trainerId) });
+    const duties = assignDutySchema.parse(req.body);
+    res.json({ topic: await courses.assignTopicDuties(req.user, req.params.topicId, duties) });
   }),
 );
 

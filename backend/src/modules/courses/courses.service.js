@@ -57,6 +57,80 @@ export async function assertCourseLead(user, courseId) {
   return course;
 }
 
+/**
+ * Nobody builds a course and sits in it as a learner.
+ *
+ * Someone on both sides would appear in their own candidate progress, be
+ * allotted topics they wrote, and sit the quiz they set. The rule is enforced
+ * from both ends: staff cannot be enrolled, and anyone enrolled cannot be made
+ * staff — see assertNotEnrolled below for the other direction.
+ */
+export async function assertNotCourseStaff(courseId, userIds) {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return;
+
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: {
+      ownerId: true,
+      owner: { select: { id: true, fullName: true } },
+      team: { where: { userId: { in: ids } }, include: { user: { select: { fullName: true } } } },
+    },
+  });
+  if (!course) throw new AppError(404, 'Course not found');
+
+  if (course.ownerId && ids.includes(course.ownerId)) {
+    throw new AppError(
+      422,
+      `${course.owner.fullName} leads this course, so they cannot also be a learner on it`,
+    );
+  }
+
+  const [member] = course.team;
+  if (member) {
+    throw new AppError(
+      422,
+      `${member.user.fullName} is on this course’s team, so they cannot also be a learner on it`,
+    );
+  }
+}
+
+/**
+ * The other direction: someone already learning a course cannot be put on its
+ * staff. Take them off the course first — the same rule, read backwards.
+ */
+export async function assertNotEnrolled(courseId, userId, { as }) {
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId, courseId } },
+    include: { user: { select: { fullName: true } } },
+  });
+  if (!enrollment) return;
+
+  throw new AppError(
+    409,
+    `${enrollment.user.fullName} is enrolled on this course as a learner, so they cannot be its ${as}. Remove them from the course first.`,
+  );
+}
+
+/**
+ * Takes a candidate off a course entirely: their place on it and the topics
+ * released to them. Their attempts are left alone — those are a record of what
+ * happened, not an entitlement.
+ */
+export async function removeFromCourse(user, courseId, userId) {
+  await assertCourseLead(user, courseId);
+
+  const enrollment = await prisma.enrollment.findUnique({
+    where: { userId_courseId: { userId, courseId } },
+  });
+  if (!enrollment) throw new AppError(404, 'That person is not on this course');
+
+  await prisma.$transaction([
+    prisma.topicAssignment.deleteMany({ where: { userId, topic: { courseId } } }),
+    prisma.enrollment.delete({ where: { id: enrollment.id } }),
+  ]);
+}
+
 export async function listCourses(user) {
   // Admins see everything. A trainer sees the courses they lead and the ones
   // they are on the team of — both are "my courses" from where they sit.
@@ -73,7 +147,10 @@ export async function listCourses(user) {
       _count: { select: { topics: true, enrollments: true, team: true } },
       // Which of this course's topics are the viewer's duty, so the list can say
       // so without a request per course.
-      topics: { where: { assignedTrainerId: user.id }, select: { id: true } },
+      topics: {
+        where: { OR: [{ materialTrainerId: user.id }, { quizTrainerId: user.id }] },
+        select: { id: true },
+      },
     },
   });
 
@@ -101,7 +178,8 @@ export async function getCourse(user, courseId) {
       topics: {
         orderBy: { position: 'asc' },
         include: {
-          assignedTrainer: { select: { id: true, fullName: true } },
+          materialTrainer: { select: { id: true, fullName: true } },
+          quizTrainer: { select: { id: true, fullName: true } },
           materials: { orderBy: { position: 'asc' } },
           quiz: {
             select: {
@@ -137,13 +215,13 @@ async function assertCodeFree(code, exceptId, client = prisma) {
 }
 
 /**
- * Creates a course under a trainer, or under nobody yet when ownerId is null.
- * Callers are responsible for checking that ownerId really is a trainer.
+ * Creates a course under a lead, or under nobody yet when ownerId is null.
+ * Callers are responsible for checking that ownerId really is a lead.
  *
  * `client` takes a transaction when the caller is also promoting the owner, so
  * the promotion and the course appear together or not at all.
  */
-export async function createCourseForTrainer(ownerId, data, client = prisma) {
+export async function createCourseForLead(ownerId, data, client = prisma) {
   await assertCodeFree(data.code, undefined, client);
 
   return client.course.create({
@@ -185,7 +263,11 @@ export async function createTopic(user, courseId, data) {
   });
 }
 
-/** As courseRelation, for a topic, plus whether this topic is the user's duty. */
+/**
+ * As courseRelation, for a topic, plus which halves of it are this user's duty.
+ * A topic is two jobs — writing the material and setting the quiz — and the
+ * lead may have given them to different people.
+ */
 export async function topicRelation(user, topicId) {
   const topic = await prisma.topic.findUnique({
     where: { id: topicId },
@@ -199,7 +281,12 @@ export async function topicRelation(user, topicId) {
   else if (course.ownerId === user.id) relation = 'lead';
   else if (course.team.some((t) => t.userId === user.id)) relation = 'trainer';
 
-  return { topic, relation, onDuty: topic.assignedTrainerId === user.id };
+  return {
+    topic,
+    relation,
+    onMaterialDuty: topic.materialTrainerId === user.id,
+    onQuizDuty: topic.quizTrainerId === user.id,
+  };
 }
 
 /** Read a topic: the lead, anyone on the team, or an admin. */
@@ -209,24 +296,40 @@ export async function assertTopicRead(user, topicId) {
   return topic;
 }
 
+const DUTY = {
+  material: { on: 'onMaterialDuty', noun: 'material' },
+  quiz: { on: 'onQuizDuty', noun: 'quiz' },
+};
+
 /**
- * Write a topic's contents — its material, its quiz, its own title and blurb.
+ * Write one half of a topic — its material, or its quiz.
  *
- * Open to the lead, and to the team trainer whose duty this topic is. A trainer
- * on the team but not on duty for this particular topic is deliberately shut
- * out: the point of handing topics out is that each has one owner.
+ * Open to the lead, and to the trainer holding *that* duty. Holding the other
+ * half is not enough: the point of splitting the job in two is that each half
+ * has exactly one author.
  */
-export async function assertTopicWrite(user, topicId) {
-  const { topic, relation, onDuty } = await topicRelation(user, topicId);
+function assertDuty(kind) {
+  const { on, noun } = DUTY[kind];
 
-  if (isLead(relation)) return topic;
-  if (relation === 'trainer' && onDuty) return topic;
+  return async (user, topicId) => {
+    const state = await topicRelation(user, topicId);
+    const { topic, relation } = state;
 
-  if (relation === 'trainer') {
-    throw new AppError(403, 'That topic is another trainer’s duty on this course');
-  }
-  throw new AppError(403, 'You are not on that course');
+    if (isLead(relation)) return topic;
+    if (relation === 'trainer' && state[on]) return topic;
+
+    if (relation === 'trainer') {
+      throw new AppError(403, `Setting this topic’s ${noun} is another trainer’s duty`);
+    }
+    throw new AppError(403, 'You are not on that course');
+  };
 }
+
+/** Uploading, renaming or removing this topic's material. */
+export const assertMaterialWrite = assertDuty('material');
+
+/** Creating the quiz, and writing or changing its questions. */
+export const assertQuizWrite = assertDuty('quiz');
 
 /**
  * Publishing, deleting, or handing out a topic — the lead's call, never a team
@@ -253,9 +356,10 @@ export async function assertTopicLead(user, topicId) {
 export const changesPublishState = (data) => data.isPublished !== undefined;
 
 export async function updateTopic(user, topicId, data) {
-  if (changesPublishState(data)) await assertTopicLead(user, topicId);
-  else await assertTopicWrite(user, topicId);
-
+  // The topic's own record — title, blurb, publish state — is the lead's. Now
+  // that the work is split in two, neither trainer owns the topic itself; they
+  // own the material or the quiz hanging off it.
+  await assertTopicLead(user, topicId);
   return prisma.topic.update({ where: { id: topicId }, data });
 }
 
@@ -265,30 +369,42 @@ export async function deleteTopic(user, topicId) {
 }
 
 /**
- * The lead putting a team trainer on duty for a topic, or clearing it with null.
- * Only someone already on the team can be given a duty — the team is the admin's
- * decision, dividing it up is the lead's.
+ * The lead handing out a topic's two jobs — writing the material, setting the
+ * quiz — or clearing either with null.
+ *
+ * `duties` is a patch: only the keys present are changed, so giving the quiz to
+ * somebody leaves the material where it is. Only trainers already on the team
+ * can be named; the team is the admin's decision, dividing it up is the lead's.
  */
-export async function assignTopicDuty(user, topicId, trainerId) {
+export async function assignTopicDuties(user, topicId, duties) {
   const topic = await assertTopicLead(user, topicId);
 
-  if (trainerId) {
-    const onTeam = await prisma.courseTrainer.findUnique({
-      where: { courseId_userId: { courseId: topic.courseId, userId: trainerId } },
-      include: { user: { select: { fullName: true, isActive: true } } },
+  const data = {};
+  if ('material' in duties) data.materialTrainerId = duties.material;
+  if ('quiz' in duties) data.quizTrainerId = duties.quiz;
+
+  const named = [duties.material, duties.quiz].filter(Boolean);
+  if (named.length > 0) {
+    const onTeam = await prisma.courseTrainer.findMany({
+      where: { courseId: topic.courseId, userId: { in: named } },
+      include: { user: { select: { id: true, fullName: true, isActive: true } } },
     });
 
-    if (!onTeam) {
-      throw new AppError(422, 'That trainer is not on this course’s team');
-    }
-    if (!onTeam.user.isActive) {
-      throw new AppError(422, `${onTeam.user.fullName}’s account is deactivated`);
+    for (const userId of new Set(named)) {
+      const row = onTeam.find((t) => t.userId === userId);
+      if (!row) throw new AppError(422, 'That trainer is not on this course’s team');
+      if (!row.user.isActive) {
+        throw new AppError(422, `${row.user.fullName}’s account is deactivated`);
+      }
     }
   }
 
   return prisma.topic.update({
     where: { id: topicId },
-    data: { assignedTrainerId: trainerId },
-    include: { assignedTrainer: { select: { id: true, fullName: true } } },
+    data,
+    include: {
+      materialTrainer: { select: { id: true, fullName: true } },
+      quizTrainer: { select: { id: true, fullName: true } },
+    },
   });
 }

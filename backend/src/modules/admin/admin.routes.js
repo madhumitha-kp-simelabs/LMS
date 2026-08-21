@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
 // Imported by name, not as a namespace: the overview handler below has its own
 // local `courses`, and shadowing the module would be a trap waiting to happen.
-import { createCourseForTrainer } from '../courses/courses.service.js';
+import { assertNotEnrolled, createCourseForLead } from '../courses/courses.service.js';
 import {
   addTeamMemberSchema,
   createAllotmentSchema,
@@ -21,16 +21,22 @@ const round = (n, dp = 1) => Math.round(n * 10 ** dp) / 10 ** dp;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
- * Resolves the person a course is being handed to, marking them a trainer if
- * they are still a candidate.
+ * Resolves the person a job is being handed to, giving a candidate the role
+ * that job requires — `lead` for running a course, `trainer` for joining a team.
  *
- * Guards both paths that set an owner — creating a course and reallotting one.
  * The promotion is deliberately part of the same act: an admin picking a name
- * off the list means "this person runs this course", and doing it in two steps
- * would leave the course owned by someone who cannot open it. Takes a
- * transaction so the promotion and the allotment land together.
+ * off the list means "this person does this work", and doing it in two steps
+ * would leave a course owned by someone who cannot open it. Takes a transaction
+ * so the promotion and the allotment land together.
+ *
+ * Someone who already holds the *other* role is refused rather than switched.
+ * Moving between lead and trainer changes what a person may do everywhere, so
+ * it is a deliberate act on the Administration page, not a side effect of
+ * filling a slot.
  */
-async function takeOnAsTrainer(tx, userId) {
+async function takeOn(tx, userId, wanted) {
+  const other = wanted === 'lead' ? 'trainer' : 'lead';
+
   const user = await tx.user.findUnique({
     where: { id: userId },
     select: { id: true, fullName: true, role: true, isActive: true },
@@ -38,19 +44,37 @@ async function takeOnAsTrainer(tx, userId) {
 
   if (!user) throw new AppError(404, 'That person no longer exists');
   if (user.role === 'admin') {
-    throw new AppError(400, `${user.fullName} is an administrator — courses are run by trainers`);
+    throw new AppError(400, `${user.fullName} is an administrator — courses are staffed by leads and trainers`);
   }
   if (!user.isActive) {
     throw new AppError(400, `${user.fullName}’s account is deactivated`);
   }
 
+  // Leads and trainers are different jobs, not ranks: a lead is never put on
+  // someone else's team, and a trainer never takes a course of their own. The
+  // way across is to change their role deliberately, on the Administration page.
+  if (user.role === other) {
+    throw new AppError(
+      409,
+      wanted === 'lead'
+        ? `${user.fullName} is a trainer. Only leads can run a course — change their role first if that is what you want.`
+        : `${user.fullName} is a lead. Leads run their own courses rather than joining someone else's team.`,
+    );
+  }
+
   if (user.role === 'candidate') {
-    await tx.user.update({ where: { id: user.id }, data: { role: 'trainer' } });
-    return { ...user, role: 'trainer', promoted: true };
+    await tx.user.update({ where: { id: user.id }, data: { role: wanted } });
+    return { ...user, role: wanted, promoted: true };
   }
 
   return { ...user, promoted: false };
 }
+
+/** Allotting a course, or creating one: the owner is always a lead. */
+const takeOnAsLead = (tx, userId) => takeOn(tx, userId, 'lead');
+
+/** Joining a course team: team members are always trainers. */
+const takeOnAsTrainer = (tx, userId) => takeOn(tx, userId, 'trainer');
 
 /**
  * Organisation-wide overview: every course, trainer and candidate in one
@@ -75,9 +99,10 @@ router.get(
             orderBy: { addedAt: 'asc' },
             select: { user: { select: { id: true, fullName: true, isActive: true } } },
           },
-          // Unclaimed topics tell the admin whether the lead has divided the
-          // work up yet.
-          topics: { select: { assignedTrainerId: true } },
+          // Unclaimed halves tell the admin whether the lead has divided the
+          // work up yet — a topic counts as outstanding if either its material
+          // or its quiz has nobody on it.
+          topics: { select: { materialTrainerId: true, quizTrainerId: true } },
         },
       }),
       prisma.user.findMany({
@@ -87,7 +112,8 @@ router.get(
             select: {
               coursesOwned: true,
               courseTeams: true,
-              topicDuties: true,
+              materialDuties: true,
+              quizDuties: true,
               enrollments: true,
               topicAccess: true,
               attempts: true,
@@ -148,7 +174,8 @@ router.get(
         trainer: course.owner,
         team: course.team.map((row) => row.user),
         topics: course._count.topics,
-        unassignedTopics: course.topics.filter((t) => !t.assignedTrainerId).length,
+        unassignedTopics: course.topics.filter((t) => !t.materialTrainerId || !t.quizTrainerId)
+          .length,
         candidates: active,
         pendingRequests: pending,
         feedbackCount: ratings.length,
@@ -196,20 +223,45 @@ router.get(
       }
     }
 
-    const trainers = users
-      .filter((u) => u.role === 'trainer')
-      .map((u) => ({
-        id: u.id,
-        fullName: u.fullName,
-        email: u.email,
-        isActive: u.isActive,
-        createdAt: u.createdAt,
-        courses: u._count.coursesOwned,
-        allotted: coursesByTrainer.get(u.id) ?? [],
-        assisting: teamsByTrainer.get(u.id) ?? [],
-        topicDuties: u._count.topicDuties,
-        candidatesReached: reachByTrainer.get(u.id)?.size ?? 0,
-      }));
+    // Leads and trainers are separate account types now, so they are separate
+    // lists. The shape is shared: both answer "which courses is this person on".
+    const staff = (role) =>
+      users
+        .filter((u) => u.role === role)
+        .map((u) => ({
+          id: u.id,
+          fullName: u.fullName,
+          email: u.email,
+          role: u.role,
+          isActive: u.isActive,
+          createdAt: u.createdAt,
+          courses: u._count.coursesOwned,
+          allotted: coursesByTrainer.get(u.id) ?? [],
+          assisting: teamsByTrainer.get(u.id) ?? [],
+          topicDuties: u._count.materialDuties + u._count.quizDuties,
+          candidatesReached: reachByTrainer.get(u.id)?.size ?? 0,
+        }));
+
+    const leads = staff('lead');
+    const trainers = staff('trainer');
+
+    // Which courses each candidate is on, and who leads them. Names rather than
+    // a tally: the list is meant to answer "who is doing what", and the numbers
+    // live on the candidate's own page.
+    const coursesByCandidate = new Map();
+    for (const course of courses) {
+      for (const enrollment of course.enrollments) {
+        const list = coursesByCandidate.get(enrollment.userId) ?? [];
+        list.push({
+          id: course.id,
+          code: course.code,
+          title: course.title,
+          status: enrollment.status,
+          trainer: course.owner,
+        });
+        coursesByCandidate.set(enrollment.userId, list);
+      }
+    }
 
     const candidates = users
       .filter((u) => u.role === 'candidate')
@@ -219,6 +271,7 @@ router.get(
           id: u.id,
           fullName: u.fullName,
           email: u.email,
+          enrolled: coursesByCandidate.get(u.id) ?? [],
           isActive: u.isActive,
           createdAt: u.createdAt,
           courses: u._count.enrollments,
@@ -246,6 +299,7 @@ router.get(
       stats: {
         courses: courseRows.length,
         publishedCourses: courseRows.filter((c) => c.isPublished).length,
+        leads: leads.length,
         trainers: trainers.length,
         candidates: candidates.length,
         admins: admins.length,
@@ -259,9 +313,138 @@ router.get(
             : round(scored.reduce((sum, c) => sum + c.averageScore, 0) / scored.length),
       },
       courses: courseRows,
+      leads,
       trainers,
       candidates,
       admins,
+    });
+  }),
+);
+
+/**
+ * Everything about one candidate, for their own page: the courses they are on,
+ * how far through each they are, and every quiz attempt they have made.
+ *
+ * The overview deliberately carries none of this — it would multiply the
+ * payload by the number of people on the books to show figures that only
+ * matter once you are looking at somebody in particular.
+ */
+router.get(
+  '/candidates/:userId',
+  handle(async (req, res) => {
+    const { userId } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, fullName: true, email: true, role: true, isActive: true, createdAt: true },
+    });
+    if (!user) throw new AppError(404, 'That person no longer exists');
+
+    const [enrollments, topicAccess, attempts] = await Promise.all([
+      prisma.enrollment.findMany({
+        where: { userId },
+        orderBy: { enrolledAt: 'desc' },
+        include: {
+          course: {
+            select: {
+              id: true,
+              code: true,
+              title: true,
+              isPublished: true,
+              durationWeeks: true,
+              owner: { select: { id: true, fullName: true } },
+              _count: { select: { topics: true } },
+            },
+          },
+        },
+      }),
+      prisma.topicAssignment.findMany({
+        where: { userId },
+        include: { topic: { select: { id: true, title: true, position: true, courseId: true } } },
+      }),
+      prisma.attempt.findMany({
+        where: { candidateId: userId, status: 'scored' },
+        orderBy: [{ quizId: 'asc' }, { attemptNumber: 'asc' }],
+        include: {
+          quiz: {
+            select: {
+              id: true,
+              title: true,
+              topic: { select: { id: true, title: true, courseId: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    // The latest scored attempt per quiz is the one that counts — the same rule
+    // the dashboard uses, so the two never disagree.
+    const latest = new Map();
+    for (const attempt of attempts) latest.set(attempt.quizId, attempt);
+    const counted = [...latest.values()];
+
+    const scoreOver = (rows) => {
+      const possible = rows.reduce((sum, a) => sum + a.maxScore, 0);
+      if (possible === 0) return null;
+      return round((rows.reduce((sum, a) => sum + a.totalScore, 0) / possible) * 100);
+    };
+
+    const courses = enrollments.map(({ course, ...enrollment }) => {
+      const mine = counted.filter((a) => a.quiz.topic.courseId === course.id);
+      const allotted = topicAccess.filter((t) => t.topic.courseId === course.id);
+
+      return {
+        id: course.id,
+        code: course.code,
+        title: course.title,
+        isPublished: course.isPublished,
+        durationWeeks: course.durationWeeks,
+        trainer: course.owner,
+        status: enrollment.status,
+        enrolledAt: enrollment.enrolledAt,
+        startedAt: enrollment.startedAt,
+        completedAt: enrollment.completedAt,
+        topics: course._count.topics,
+        topicsAllotted: allotted.length,
+        quizzesDone: mine.length,
+        averageScore: scoreOver(mine),
+      };
+    });
+
+    const byCourse = new Map(enrollments.map((e) => [e.courseId, e.course]));
+
+    res.json({
+      candidate: {
+        ...user,
+        // Every attempt, newest first — retakes included, since the point of
+        // this page is the history the overview flattens away.
+        attempts: attempts
+          .map((a) => ({
+            id: a.id,
+            attemptNumber: a.attemptNumber,
+            quizTitle: a.quiz.title,
+            topicTitle: a.quiz.topic.title,
+            courseCode: byCourse.get(a.quiz.topic.courseId)?.code ?? null,
+            totalScore: a.totalScore,
+            maxScore: a.maxScore,
+            percentage: a.maxScore === 0 ? null : round((a.totalScore / a.maxScore) * 100),
+            submittedAt: a.submittedAt,
+            counts: latest.get(a.quizId)?.id === a.id,
+          }))
+          .reverse(),
+        courses,
+        summary: {
+          courses: courses.length,
+          topicsAllotted: topicAccess.length,
+          quizzesDone: counted.length,
+          attempts: attempts.length,
+          averageScore: scoreOver(counted),
+          lastActive: attempts.reduce(
+            (latestAt, a) => (!latestAt || a.submittedAt > latestAt ? a.submittedAt : latestAt),
+            null,
+          ),
+        },
+      },
     });
   }),
 );
@@ -299,21 +482,21 @@ router.patch(
       throw new AppError(403, 'Administrator accounts cannot be changed from here');
     }
 
-    if (role === 'candidate') {
-      // Course.ownerId is Restrict-deleted for a reason: a course with no lead
-      // has nobody to run it. Allot the courses elsewhere first, then demote.
-      if (user._count.coursesOwned > 0) {
-        throw new AppError(
-          409,
-          `${user.fullName} still leads ${plural(user._count.coursesOwned, 'course')}. Allot them to another trainer first.`,
-        );
-      }
-      if (user._count.courseTeams > 0) {
-        throw new AppError(
-          409,
-          `${user.fullName} is on the team of ${plural(user._count.courseTeams, 'course')}. Take them off first.`,
-        );
-      }
+    // Leaving a role means leaving the work that came with it, or the course is
+    // left without someone who can publish it and the team without its writer.
+    // Course.ownerId is Restrict-deleted for exactly this reason.
+    if (role !== 'lead' && user._count.coursesOwned > 0) {
+      throw new AppError(
+        409,
+        `${user.fullName} still leads ${plural(user._count.coursesOwned, 'course')}. Allot ${user._count.coursesOwned === 1 ? 'it' : 'them'} to another lead first.`,
+      );
+    }
+
+    if (role !== 'trainer' && user._count.courseTeams > 0) {
+      throw new AppError(
+        409,
+        `${user.fullName} is on the team of ${plural(user._count.courseTeams, 'course')}. Take them off first.`,
+      );
     }
 
     const updated = await prisma.user.update({
@@ -341,8 +524,8 @@ router.post(
     const { trainerId, ...input } = createCourseSchemaAdmin.parse(req.body);
 
     const { course, promoted } = await prisma.$transaction(async (tx) => {
-      const trainer = trainerId ? await takeOnAsTrainer(tx, trainerId) : null;
-      const created = await createCourseForTrainer(trainer?.id ?? null, input, tx);
+      const trainer = trainerId ? await takeOnAsLead(tx, trainerId) : null;
+      const created = await createCourseForLead(trainer?.id ?? null, input, tx);
       return { course: created, promoted: trainer?.promoted ?? false };
     });
 
@@ -372,7 +555,8 @@ router.post(
       });
       if (!existing) throw new AppError(404, 'Course not found');
 
-      const trainer = await takeOnAsTrainer(tx, userId);
+      await assertNotEnrolled(existing.id, userId, { as: 'lead' });
+      const trainer = await takeOnAsLead(tx, userId);
 
       const updated = await tx.course.update({
         where: { id: existing.id },
@@ -414,6 +598,7 @@ router.post(
       });
       if (!course) throw new AppError(404, 'Course not found');
 
+      await assertNotEnrolled(courseId, userId, { as: 'trainer' });
       const trainer = await takeOnAsTrainer(tx, userId);
 
       if (course.ownerId === trainer.id) {
@@ -452,8 +637,12 @@ router.delete(
       if (count === 0) throw new AppError(404, 'That trainer is not on this team');
 
       await tx.topic.updateMany({
-        where: { courseId, assignedTrainerId: userId },
-        data: { assignedTrainerId: null },
+        where: { courseId, materialTrainerId: userId },
+        data: { materialTrainerId: null },
+      });
+      await tx.topic.updateMany({
+        where: { courseId, quizTrainerId: userId },
+        data: { quizTrainerId: null },
       });
     });
 

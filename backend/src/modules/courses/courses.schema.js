@@ -31,9 +31,15 @@ export const createTopicSchema = z.object({
 export const updateTopicSchema = createTopicSchema.partial();
 
 /**
- * Putting a team trainer on duty for a topic. Nullable rather than optional:
- * clearing a duty is an explicit `null`, not an omitted field.
+ * Handing out a topic's two jobs. Each key is optional so one half can be
+ * changed without touching the other, but nullable rather than merely absent:
+ * clearing a duty is an explicit `null`, and omitting it means "leave it alone".
  */
-export const assignDutySchema = z.object({
-  trainerId: z.string().uuid().nullable(),
-});
+export const assignDutySchema = z
+  .object({
+    material: z.string().uuid().nullable().optional(),
+    quiz: z.string().uuid().nullable().optional(),
+  })
+  .refine((d) => 'material' in d || 'quiz' in d, {
+    message: 'Name at least one of material or quiz',
+  });

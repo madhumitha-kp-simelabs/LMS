@@ -13,7 +13,7 @@
  *   slate    neutral chrome and secondary text
  */
 
-export function Button({ variant = 'primary', className = '', ...props }) {
+export function Button({ variant = 'primary', size = 'md', className = '', ...props }) {
   const styles = {
     primary: 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700',
     secondary: 'border border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50',
@@ -21,9 +21,16 @@ export function Button({ variant = 'primary', className = '', ...props }) {
     danger: 'border border-rose-200 bg-white text-rose-700 hover:bg-rose-50',
   }[variant];
 
+  // A prop rather than a px-* override through className: Tailwind emits px-4
+  // after px-3, so a smaller padding passed in silently loses to the base one.
+  const sizes = {
+    sm: 'px-3 py-1.5 text-sm',
+    md: 'px-4 py-2 text-sm',
+  }[size];
+
   return (
     <button
-      className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${styles} ${className}`}
+      className={`rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${sizes} ${styles} ${className}`}
       {...props}
     />
   );
@@ -156,6 +163,40 @@ export const Cell = ({ children, align = 'left', className = '' }) => (
     {children}
   </td>
 );
+
+/** "Priya Menon" -> "PM"; a single name gives one letter. */
+export function initials(fullName) {
+  const parts = (fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+/** A name as a coloured disc of initials — faces scan faster than text. */
+export function Avatar({ name, tone = 'slate', size = 'md' }) {
+  const tones = {
+    indigo: 'bg-indigo-100 text-indigo-700',
+    sky: 'bg-sky-100 text-sky-700',
+    violet: 'bg-violet-100 text-violet-700',
+    amber: 'bg-amber-100 text-amber-800',
+    slate: 'bg-slate-200 text-slate-600',
+  }[tone];
+
+  const sizes = {
+    sm: 'h-6 w-6 text-[10px]',
+    md: 'h-9 w-9 text-xs',
+    lg: 'h-14 w-14 text-base',
+  }[size];
+
+  return (
+    <span
+      title={name}
+      aria-hidden
+      className={`grid shrink-0 place-items-center rounded-full font-semibold ${tones} ${sizes}`}
+    >
+      {initials(name)}
+    </span>
+  );
+}
 
 export function Badge({ children, tone = 'slate' }) {
   const tones = {

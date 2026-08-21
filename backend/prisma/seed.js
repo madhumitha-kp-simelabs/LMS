@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 // from the office SAML directory, which will replace these rows entirely.
 const SEED_USERS = [
   { email: 'admin@learningtracker.local', fullName: 'Super Admin', role: 'admin' },
-  { email: 'trainer@learningtracker.local', fullName: 'Priya Menon', role: 'trainer' },
+  { email: 'trainer@learningtracker.local', fullName: 'Priya Menon', role: 'lead' },
   { email: 'candidate@learningtracker.local', fullName: 'Arun Kumar', role: 'candidate' },
   { email: 'candidate2@learningtracker.local', fullName: 'Divya Nair', role: 'candidate' },
 
@@ -76,7 +76,9 @@ async function main() {
   for (const user of SEED_USERS) {
     users[user.email] = await prisma.user.upsert({
       where: { email: user.email },
-      update: { fullName: user.fullName, role: user.role },
+      // Role is set on create only. Re-running the seed must not demote
+      // somebody an admin has since made a lead or put on a course team.
+      update: { fullName: user.fullName },
       create: { ...user, passwordHash },
     });
     console.log(`  ${user.role.padEnd(9)} ${user.email}`);

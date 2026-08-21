@@ -2,16 +2,19 @@
 // Hierarchy: Course -> Topic -> Quiz -> Question -> QuestionOption
 // Material hangs off Topic. Candidates are granted access per Topic.
 //
-// Who may do what to a course is not a global role but a relationship to that
-// course, so the same trainer can lead one subject and assist on another:
+// Staff come in two kinds, and an account is one or the other:
 //
-//   lead     Course.owner — the trainer an admin allotted the course to. Runs
-//            it: edits the course, creates topics, hands them out, and is the
-//            only one who can publish anything to candidates.
-//   trainer  a CourseTrainer row — put on the team by an admin. Builds the
-//            material and quiz for the topics the lead assigned them, and
-//            cannot publish.
-//   admin    everything, everywhere.
+//   lead     Runs courses. A course's owner is always a lead: they edit it,
+//            create topics, hand each one to a trainer, and are the only ones
+//            who can publish anything to candidates.
+//   trainer  Works under leads. Added to a course's team by an admin, writes
+//            the material and quiz for the topics handed to them, and can
+//            never publish or own a course.
+//   admin    Everything, everywhere.
+//
+// Authority is still checked per course — leading one course grants nothing on
+// another — but only a `lead` account can ever be a course's owner, and only a
+// `trainer` account can sit on a team.
 
 generator client {
   provider = "prisma-client-js"
@@ -26,8 +29,9 @@ datasource db {
 
 enum Role {
   candidate // employee attending courses
-  trainer   // authors courses, uploads material, allots candidates
-  admin     // super admin; sees every trainer, candidate and course
+  trainer   // writes the topics a lead hands them; may never publish
+  lead      // runs courses: publishes them and divides the work among trainers
+  admin     // super admin; sees every course and everyone on it
 }
 
 enum MaterialType {
@@ -76,7 +80,8 @@ model User {
   // everywhere the concept is talked about.
   coursesOwned     Course[]          @relation("CourseOwner")
   courseTeams      CourseTrainer[]   @relation("TrainerOnCourse")
-  topicDuties      Topic[]           @relation("TopicDuty")
+  materialDuties   Topic[]           @relation("TopicMaterialDuty")
+  quizDuties       Topic[]           @relation("TopicQuizDuty")
   enrollments      Enrollment[]
   topicAccess      TopicAssignment[] @relation("AssignedCandidate")
   topicsGranted    TopicAssignment[] @relation("GrantedByTrainer")
@@ -145,21 +150,25 @@ model Topic {
   // Only the course's lead may set this. A team trainer writes the material and
   // the quiz; releasing it to candidates is the lead's decision.
   isPublished Boolean  @default(false)
-  // The team trainer on duty for this topic — whose job it is to write the
-  // material and the quiz. Null while the lead has not handed it out yet.
-  assignedTrainerId String?
+  // A topic is two pieces of work, and the lead may hand them to different
+  // people: one writes the reading material, another sets the quiz. Either is
+  // null while that half has not been handed out.
+  materialTrainerId String?
+  quizTrainerId     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   course          Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  assignedTrainer User?             @relation("TopicDuty", fields: [assignedTrainerId], references: [id], onDelete: SetNull)
+  materialTrainer User?             @relation("TopicMaterialDuty", fields: [materialTrainerId], references: [id], onDelete: SetNull)
+  quizTrainer     User?             @relation("TopicQuizDuty", fields: [quizTrainerId], references: [id], onDelete: SetNull)
   materials       Material[]
   quiz            Quiz?
   assignments     TopicAssignment[]
 
   @@unique([courseId, position])
   @@index([courseId])
-  @@index([assignedTrainerId])
+  @@index([materialTrainerId])
+  @@index([quizTrainerId])
   @@map("topics")
 }
 

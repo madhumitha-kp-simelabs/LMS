@@ -3,7 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
 import { deleteFile, materialTypeFor, openFile, uploadMaterial } from '../../lib/storage.js';
-import { assertTopicWrite } from '../courses/courses.service.js';
+import { assertMaterialWrite, assertTopicRead } from '../courses/courses.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -22,11 +22,11 @@ function receiveFile(req, res, next) {
 router.post(
   '/topics/:topicId/materials',
   requireAuth,
-  requireRole('trainer', 'admin'),
+  requireRole('trainer', 'lead', 'admin'),
   receiveFile,
   handle(async (req, res) => {
     // Uploading material is the job of whoever is on duty for the topic.
-    await assertTopicWrite(req.user, req.params.topicId);
+    await assertMaterialWrite(req.user, req.params.topicId);
     if (!req.file) throw new AppError(400, 'No file was uploaded');
 
     const last = await prisma.material.findFirst({
@@ -71,8 +71,11 @@ router.get(
         where: { userId_topicId: { userId: req.user.id, topicId: material.topicId } },
       });
       if (!allotted) throw new AppError(403, 'That material has not been shared with you');
-    } else if (req.user.role === 'trainer' && material.topic.course.ownerId !== req.user.id) {
-      throw new AppError(403, 'That material belongs to another trainer’s course');
+    } else {
+      // Staff read by the same rule as everywhere else: the course's lead,
+      // anyone on its team, or an admin. Reading is open to the whole team even
+      // when the topic is somebody else's duty.
+      await assertTopicRead(req.user, material.topicId);
     }
 
     const filename = material.originalFilename ?? 'download';
@@ -89,12 +92,12 @@ router.get(
 router.delete(
   '/materials/:materialId',
   requireAuth,
-  requireRole('trainer', 'admin'),
+  requireRole('trainer', 'lead', 'admin'),
   handle(async (req, res) => {
     const material = await prisma.material.findUnique({ where: { id: req.params.materialId } });
     if (!material) throw new AppError(404, 'Material not found');
 
-    await assertTopicWrite(req.user, material.topicId);
+    await assertMaterialWrite(req.user, material.topicId);
     await prisma.material.delete({ where: { id: material.id } });
     if (material.fileUrl) await deleteFile(material.fileUrl);
 

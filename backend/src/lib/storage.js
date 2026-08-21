@@ -80,7 +80,12 @@ export async function openFile(key) {
 export async function deleteFile(key) {
   try {
     await unlink(resolveKey(key));
-  } catch {
-    // Already gone — deleting the database row is what actually matters.
+  } catch (err) {
+    // A file that has already gone is fine — the database row is what matters,
+    // and the caller has removed that. Anything else means the row is gone but
+    // the bytes are still on disk, so say so rather than leaking in silence.
+    if (err.code !== 'ENOENT') {
+      console.warn(`Could not delete upload ${key}: ${err.code ?? err.message}`);
+    }
   }
 }

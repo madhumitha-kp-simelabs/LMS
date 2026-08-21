@@ -2,18 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { HOME_FOR_ROLE, useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
+import { initials } from './ui';
 
 const ROLE = {
   candidate: { label: 'Candidate', avatar: 'bg-sky-100 text-sky-700', text: 'text-sky-700' },
   trainer: { label: 'Trainer', avatar: 'bg-violet-100 text-violet-700', text: 'text-violet-700' },
+  lead: { label: 'Course lead', avatar: 'bg-indigo-100 text-indigo-700', text: 'text-indigo-700' },
   admin: { label: 'Administrator', avatar: 'bg-amber-100 text-amber-800', text: 'text-amber-800' },
 };
-
-/** "Priya Menon" -> "PM"; a single name gives one letter. */
-function initials(fullName) {
-  const parts = fullName.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
-}
 
 const NAV_FOR_ROLE = {
   candidate: [
@@ -24,12 +20,16 @@ const NAV_FOR_ROLE = {
   ],
   // `end` where a link has routes nested under it, so the parent does not stay
   // highlighted alongside the child.
-  trainer: [
-    { to: '/trainer', label: 'Courses', end: true },
+  //
+  // A trainer writes the topics handed to them and nothing else, so they get one
+  // link. A lead also fields join requests for the courses they run.
+  trainer: [{ to: '/trainer', label: 'My courses', end: true }],
+  lead: [
+    { to: '/trainer', label: 'My courses', end: true },
     { to: '/trainer/inbox', label: 'Inbox', badge: 'requests' },
   ],
   // An admin's "Courses" is the catalogue — what exists and what it is called.
-  // Trainers get the working view of the courses allotted to them.
+  // Leads and trainers get the working view of the courses they are on.
   admin: [
     { to: '/admin/courses', label: 'Courses' },
     { to: '/admin/allotment', label: 'Allotment' },
@@ -45,7 +45,8 @@ export default function AppLayout() {
   const role = ROLE[user.role];
 
   const [pending, setPending] = useState(0);
-  const staffMember = user.role === 'trainer' || user.role === 'admin';
+  // Only people who decide on join requests need the pending count.
+  const staffMember = user.role === 'lead' || user.role === 'admin';
 
   const refreshPending = useCallback(() => {
     if (!staffMember) return;
