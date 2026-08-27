@@ -102,6 +102,12 @@ export default function QuizSection({ topic, onChanged, onError }) {
             {totalMarks === 1 ? '' : 's'}
             {attempts > 0 && ` · ${attempts} attempts`}
           </p>
+          {/* What a candidate actually sits, when that differs from the bank. */}
+          {quiz.questionsPerAttempt != null && questions.length > quiz.questionsPerAttempt && (
+            <p className="mt-0.5 text-xs font-medium text-violet-700">
+              Each candidate draws {quiz.questionsPerAttempt} of these, in their own order.
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Badge tone={quiz.isPublished ? 'green' : 'amber'}>
@@ -112,6 +118,13 @@ export default function QuizSection({ topic, onChanged, onError }) {
           </Button>
         </div>
       </div>
+
+      <QuizSettings
+        quiz={quiz}
+        bankSize={questions.length}
+        onSaved={() => loadQuiz(quiz.id).then(onChanged)}
+        onError={onError}
+      />
 
       <div className="mt-4 space-y-3">
         {questions.length === 0 ? (
@@ -368,6 +381,144 @@ function QuestionForm({ quizId, questionId, initial, onSaved, onCancel, onError,
           </Button>
         )}
       </div>
+    </form>
+  );
+}
+
+/**
+ * How a sitting is drawn: how many questions, what passes, how many tries.
+ *
+ * Folded away by default. These are set once when a quiz is built and then
+ * left alone for months, so they do not earn permanent space above the
+ * questions themselves — but they were previously not settable at all, which
+ * left the pass mark and the draw stuck on their defaults.
+ */
+function QuizSettings({ quiz, bankSize, onSaved, onError }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    // Strings, because that is what the inputs hand back; empty means "no
+    // limit" for two of these and "serve everything" for the third.
+    questionsPerAttempt: quiz.questionsPerAttempt == null ? '' : String(quiz.questionsPerAttempt),
+    passPercentage: String(Number(quiz.passPercentage ?? 60)),
+    maxAttempts: quiz.maxAttempts == null ? '' : String(quiz.maxAttempts),
+  });
+
+  const draw = form.questionsPerAttempt === '' ? null : Number(form.questionsPerAttempt);
+  // A draw larger than the bank is not an error — the lead may be about to
+  // write more — but it is not doing anything yet, and saying so beats letting
+  // them believe it is.
+  const short = draw != null && bankSize > 0 && draw > bankSize;
+
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/quizzes/${quiz.id}`, {
+        method: 'PATCH',
+        body: {
+          questionsPerAttempt: draw,
+          passPercentage: Number(form.passPercentage),
+          maxAttempts: form.maxAttempts === '' ? null : Number(form.maxAttempts),
+        },
+      });
+      await onSaved();
+      setOpen(false);
+    } catch (err) {
+      onError(err.details?.length ? err.details.map((d) => d.message).join(' · ') : err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        <span>Pass at {Number(quiz.passPercentage)}%</span>
+        <span className="text-slate-300">·</span>
+        <span>
+          {quiz.maxAttempts == null ? 'unlimited attempts' : `${quiz.maxAttempts} attempts`}
+        </span>
+        <span className="text-slate-300">·</span>
+        <span>
+          {quiz.questionsPerAttempt == null
+            ? 'all questions each sitting'
+            : `${quiz.questionsPerAttempt} drawn each sitting`}
+        </span>
+        <button
+          onClick={() => setOpen(true)}
+          className="text-indigo-600 underline transition hover:text-indigo-700"
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={save} className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="w-40">
+          <Input
+            label="Questions per sitting"
+            type="number"
+            min={1}
+            max={200}
+            placeholder={`all ${bankSize}`}
+            value={form.questionsPerAttempt}
+            onChange={(event) =>
+              setForm({ ...form, questionsPerAttempt: event.target.value })
+            }
+          />
+        </div>
+
+        <div className="w-32">
+          <Input
+            label="Pass mark %"
+            type="number"
+            min={0}
+            max={100}
+            value={form.passPercentage}
+            onChange={(event) => setForm({ ...form, passPercentage: event.target.value })}
+          />
+        </div>
+
+        <div className="w-32">
+          <Input
+            label="Max attempts"
+            type="number"
+            min={1}
+            max={50}
+            placeholder="unlimited"
+            value={form.maxAttempts}
+            onChange={(event) => setForm({ ...form, maxAttempts: event.target.value })}
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <Button type="submit" size="sm" disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs leading-relaxed text-slate-500">
+        {short ? (
+          <span className="font-medium text-amber-700">
+            Only {bankSize} question{bankSize === 1 ? '' : 's'} in the bank, so every candidate
+            still gets all of them until you add more.
+          </span>
+        ) : (
+          <>
+            Leave the draw empty to serve every question. Set it lower than the bank and each
+            candidate gets a different selection, in their own order — the bank should be several
+            times the draw for that to be worth doing.
+          </>
+        )}
+      </p>
     </form>
   );
 }

@@ -57,5 +57,8 @@ export function useAdminOverview() {
     [load],
   );
 
-  return { data, error, notice, busyId, run };
+  // `reload` is for screens holding a second list beside this one — team
+  // counts live on /teams, the people on /admin/overview, and a move changes
+  // both.
+  return { data, error, notice, busyId, run, reload: load };
 }

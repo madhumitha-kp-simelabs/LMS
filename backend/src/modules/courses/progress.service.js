@@ -1,7 +1,10 @@
 import { prisma } from '../../lib/prisma.js';
 
-/** Below this, a topic is called out as needing work. */
-const WEAK_THRESHOLD = 50;
+/**
+ * Used only for a quiz that somehow carries no pass mark of its own. Every
+ * quiz has one — the column defaults to 60 — so this is a floor, not a policy.
+ */
+const FALLBACK_PASS_MARK = 60;
 
 const round = (n) => Math.round(n * 10) / 10;
 
@@ -38,6 +41,56 @@ export async function courseProgress(courseId) {
   const quizIds = topics.filter((t) => t.quiz?.isPublished).map((t) => t.quiz.id);
   const candidateIds = enrollments.map((e) => e.userId);
 
+  /**
+   * The rest of each candidate's load, across the whole organisation.
+   *
+   * Someone crawling through this course may simply be carrying three others,
+   * and without that a lead reads slow progress as a person struggling when it
+   * is a person overcommitted. Which is a different conversation.
+   *
+   * Identity and milestones only — course, its lead, and whether they have
+   * started or finished. Scores on somebody else's course belong to that
+   * course's team, by the same rule that governs every other cross-course read
+   * here; the point is to see how much they are carrying, not how they are
+   * doing at it.
+   */
+  const elsewhere =
+    candidateIds.length === 0
+      ? []
+      : await prisma.enrollment.findMany({
+          where: { userId: { in: candidateIds }, courseId: { not: courseId } },
+          orderBy: { enrolledAt: 'asc' },
+          select: {
+            userId: true,
+            status: true,
+            startedAt: true,
+            completedAt: true,
+            course: {
+              select: {
+                id: true,
+                code: true,
+                title: true,
+                owner: { select: { id: true, fullName: true } },
+              },
+            },
+          },
+        });
+
+  const elsewhereByCandidate = new Map();
+  for (const row of elsewhere) {
+    const list = elsewhereByCandidate.get(row.userId) ?? [];
+    list.push({
+      id: row.course.id,
+      code: row.course.code,
+      title: row.course.title,
+      lead: row.course.owner?.fullName ?? null,
+      status: row.status,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+    });
+    elsewhereByCandidate.set(row.userId, list);
+  }
+
   const attempts =
     quizIds.length === 0 || candidateIds.length === 0
       ? []
@@ -49,6 +102,9 @@ export async function courseProgress(courseId) {
           },
           orderBy: [{ quizId: 'asc' }, { attemptNumber: 'asc' }],
           select: {
+            // The id is what lets the screen open the answers — without it the
+            // row can say 40% and nothing more.
+            id: true,
             candidateId: true,
             quizId: true,
             attemptNumber: true,
@@ -96,7 +152,16 @@ export async function courseProgress(courseId) {
         title: topic.title,
         position: topic.position,
         hasQuiz: Boolean(quiz),
+        // What this quiz asks for. Shown beside the score so "48%" reads as
+        // near-miss or nowhere near, rather than as a number on its own.
+        passMark: quiz ? Number(quiz.passPercentage) : null,
+        passed:
+          attempt && quiz
+            ? Number(attempt.percentage) >= Number(quiz.passPercentage)
+            : null,
         attempts: key ? (tries.get(key) ?? 0) : 0,
+        attemptId: attempt?.id ?? null,
+        attemptNumber: attempt?.attemptNumber ?? null,
         percentage: attempt ? Number(attempt.percentage) : null,
         totalScore: attempt?.totalScore ?? null,
         maxScore: attempt?.maxScore ?? null,
@@ -107,9 +172,13 @@ export async function courseProgress(courseId) {
     const withQuiz = topicRows.filter((t) => t.hasQuiz);
     const done = withQuiz.filter((t) => t.percentage !== null);
 
-    // Areas of improvement: weakest scores first, then anything untouched.
+    // Areas of improvement: weakest first, then anything untouched.
+    //
+    // Measured against each quiz's own pass mark rather than one number for
+    // the whole system. A lead who sets a quiz at 80% is saying 70% is not good
+    // enough on it, and a fixed threshold would quietly overrule them.
     const weak = done
-      .filter((t) => t.percentage < WEAK_THRESHOLD)
+      .filter((t) => t.percentage < (t.passMark ?? FALLBACK_PASS_MARK))
       .sort((a, b) => a.percentage - b.percentage);
     const notAttempted = withQuiz.filter((t) => t.percentage === null);
 
@@ -120,6 +189,7 @@ export async function courseProgress(courseId) {
       enrolledAt: enrollment.enrolledAt,
       startedAt: enrollment.startedAt,
       completedAt: enrollment.completedAt,
+      otherCourses: elsewhereByCandidate.get(enrollment.userId) ?? [],
       topicsAllotted: myTopics.length,
       quizzesAvailable: withQuiz.length,
       quizzesDone: done.length,
@@ -127,7 +197,12 @@ export async function courseProgress(courseId) {
       marksPossible: possible,
       overallPercentage: possible === 0 ? null : round((earned / possible) * 100),
       topics: topicRows,
-      needsWork: weak.map((t) => ({ title: t.title, position: t.position, percentage: t.percentage })),
+      needsWork: weak.map((t) => ({
+        title: t.title,
+        position: t.position,
+        percentage: t.percentage,
+        passMark: t.passMark,
+      })),
       notAttempted: notAttempted.map((t) => ({ title: t.title, position: t.position })),
     };
   });

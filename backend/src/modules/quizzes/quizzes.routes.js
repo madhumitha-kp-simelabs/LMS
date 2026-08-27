@@ -11,6 +11,7 @@ import {
 } from '../courses/courses.service.js';
 import { extractText, uploadDocument } from '../../lib/document.js';
 import { parseQuestions } from './question-parser.js';
+import { buildAttemptReview } from './attempt-review.js';
 import { questionSchema, updateQuizSchema } from './quizzes.schema.js';
 
 const router = Router();
@@ -288,6 +289,35 @@ router.delete(
 
     await prisma.question.delete({ where: { id: existing.id } });
     res.status(204).end();
+  }),
+);
+
+/**
+ * One candidate's attempt, question by question — what they were asked, what
+ * they chose, and what was right.
+ *
+ * An overall score says a candidate got 40%; it does not say which four
+ * questions they lost it on, which is the only form of the answer a trainer can
+ * actually teach from. The same shaping the candidate sees for their own
+ * attempt, so both sides are looking at exactly the same thing when they talk
+ * about it.
+ *
+ * Read access to the topic is the gate: the course's lead, anyone on its team,
+ * or an admin. Deliberately not narrowed to whoever wrote the quiz — spotting
+ * that somebody is struggling is the job of everybody teaching them.
+ */
+router.get(
+  '/attempts/:attemptId/review',
+  handle(async (req, res) => {
+    const attempt = await prisma.attempt.findUnique({
+      where: { id: req.params.attemptId },
+      select: { quiz: { select: { topicId: true } } },
+    });
+    if (!attempt) throw new AppError(404, 'Attempt not found');
+
+    await assertTopicRead(req.user, attempt.quiz.topicId);
+
+    res.json(await buildAttemptReview(req.params.attemptId));
   }),
 );
 

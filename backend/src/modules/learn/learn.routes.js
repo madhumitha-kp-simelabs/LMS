@@ -4,11 +4,34 @@ import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
 import { scoreAttempt } from './scoring.js';
+import { assertNotCourseStaff } from '../courses/courses.service.js';
+import * as projects from '../projects/projects.service.js';
+import { setDoneSchema, submissionSchema } from '../projects/projects.schema.js';
+import { uploadSubmission } from '../../lib/storage.js';
+import { buildAttemptReview } from '../quizzes/attempt-review.js';
+import { shuffleQuizFor } from '../../lib/shuffle.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-router.use(requireAuth, requireRole('candidate'));
+/**
+ * The learner side, and who gets to be one.
+ *
+ * A lead runs courses, but running one does not stop them being taught another
+ * — a React lead sitting a project-management course is the ordinary case, not
+ * an edge one. So leads reach these routes too.
+ *
+ * Nothing else has to change to make that safe: every query below is anchored
+ * on `req.user.id` through TopicAssignment or Enrollment, so a lead sees
+ * exactly what has been allotted to them and nothing their staff role would
+ * otherwise open. The rule that keeps the two apart is per course, not per
+ * account, and lives in assertNotCourseStaff — you cannot learn a course you
+ * run, but every other course is fair game.
+ *
+ * Trainers are deliberately left out for now: nobody has asked for it, and
+ * adding a role here is one word when they do.
+ */
+router.use(requireAuth, requireRole('candidate', 'lead'));
 
 /**
  * Stamps the day a candidate first opened anything in a course.
@@ -18,11 +41,31 @@ router.use(requireAuth, requireRole('candidate'));
  * either.
  */
 async function markStarted(userId, courseId) {
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { durationWeeks: true },
+  });
+
+  const startedAt = new Date();
+
   await prisma.enrollment.updateMany({
     where: { userId, courseId, startedAt: null },
-    data: { startedAt: new Date() },
+    data: {
+      startedAt,
+      // The deadline is set once, here, from the course's standard duration —
+      // and then belongs to this candidate. Extensions and pauses move theirs
+      // and nobody else's, which is why it is stored rather than recomputed.
+      // A course with no duration gets no deadline, which is different from
+      // getting one in the past.
+      dueAt: course?.durationWeeks
+        ? new Date(startedAt.getTime() + course.durationWeeks * 7 * 86400000)
+        : null,
+    },
   });
 }
+
+/** Whole days between two instants, rounded down — a pause of hours costs nothing. */
+const daysBetween = (from, to) => Math.floor((to.getTime() - from.getTime()) / 86400000);
 
 /**
  * Marks a course complete once every published quiz on the candidate's
@@ -86,6 +129,67 @@ async function assertAllotted(userId, topicId) {
  * candidate can only ever see topics explicitly allotted to them — unallotted
  * topics in the same course are invisible, not merely locked.
  */
+
+/**
+ * The practical work set for this candidate. Outstanding first, since that is
+ * what the page is for; finished ones stay listed as a record.
+ */
+router.get(
+  '/projects',
+  handle(async (req, res) => {
+    res.json({ projects: await projects.listForCandidate(req.user.id) });
+  }),
+);
+
+/**
+ * Marking a project finished, or undoing it. Only the candidate holding it can
+ * say so — finishing is a claim about your own work, not somebody else's
+ * judgement of it.
+ */
+router.patch(
+  '/projects/:projectId',
+  handle(async (req, res) => {
+    const { done } = setDoneSchema.parse(req.body);
+    const allotment = await projects.setDone(req.user.id, req.params.projectId, done);
+    res.json({ project: allotment.project, completedAt: allotment.completedAt });
+  }),
+);
+
+/** Recording a link and a note for work handed in. */
+router.patch(
+  '/projects/:projectId/submission',
+  handle(async (req, res) => {
+    const input = submissionSchema.parse(req.body);
+    await projects.saveSubmission(req.user.id, req.params.projectId, input);
+    res.json({ saved: true });
+  }),
+);
+
+/** Attaching a file to it. Replacing one removes the file it stood in for. */
+router.post(
+  '/projects/:projectId/file',
+  (req, res, next) =>
+    uploadSubmission(req, res, (err) => {
+      if (err?.code === 'LIMIT_FILE_SIZE') {
+        return next(new AppError(413, 'File is larger than the 50 MB limit'));
+      }
+      next(err);
+    }),
+  handle(async (req, res) => {
+    if (!req.file) throw new AppError(400, 'No file was uploaded');
+    await projects.attachFile(req.user.id, req.params.projectId, req.file);
+    res.status(201).json({ attached: req.file.originalname });
+  }),
+);
+
+router.delete(
+  '/projects/:projectId/file',
+  handle(async (req, res) => {
+    await projects.removeFile(req.user.id, req.params.projectId);
+    res.status(204).end();
+  }),
+);
+
 router.get(
   '/my-courses',
   handle(async (req, res) => {
@@ -94,7 +198,15 @@ router.get(
       include: {
         topic: {
           include: {
-            course: { select: { id: true, code: true, title: true, description: true } },
+            course: {
+              select: {
+                id: true,
+                code: true,
+                title: true,
+                description: true,
+                category: { select: { id: true, name: true, slug: true, position: true } },
+              },
+            },
             _count: { select: { materials: true } },
             quiz: { select: { id: true, isPublished: true } },
           },
@@ -132,10 +244,51 @@ router.get(
       });
     }
 
-    const courses = [...byCourse.values()].map((course) => ({
-      ...course,
-      topics: course.topics.sort((a, b) => a.position - b.position),
-    }));
+    // Whether they have opened this course before, so the sidebar can say
+    // "Start" the first time and "Continue" after. Derived from the enrolment
+    // rather than from the topics, because opening material without taking a
+    // quiz is still having started.
+    const enrolments = await prisma.enrollment.findMany({
+      where: { userId: req.user.id, courseId: { in: [...byCourse.keys()] } },
+      select: {
+        courseId: true,
+        startedAt: true,
+        completedAt: true,
+        dueAt: true,
+        pausedAt: true,
+        pausedDays: true,
+      },
+    });
+    const progressByCourse = new Map(enrolments.map((e) => [e.courseId, e]));
+
+    const courses = [...byCourse.values()].map((course) => {
+      const topics = course.topics.sort((a, b) => a.position - b.position);
+      const enrolment = progressByCourse.get(course.id);
+
+      return {
+        ...course,
+        topics,
+        startedAt: enrolment?.startedAt ?? null,
+        completedAt: enrolment?.completedAt ?? null,
+        dueAt: enrolment?.dueAt ?? null,
+        pausedAt: enrolment?.pausedAt ?? null,
+        pausedDays: enrolment?.pausedDays ?? 0,
+        // Overdue only while it is still outstanding. A course finished late is
+        // finished, and nagging about it afterwards helps nobody — the same
+        // rule the projects list already uses.
+        overdue:
+          !enrolment?.completedAt &&
+          !enrolment?.pausedAt &&
+          enrolment?.dueAt != null &&
+          enrolment.dueAt < new Date(),
+        // Only topics carrying a published quiz can be finished, so they are
+        // the only ones the fraction counts. A topic that is material alone has
+        // nothing to attempt and would otherwise sit permanently unfinished,
+        // holding the course at 4/5 for ever.
+        gradedTopics: topics.filter((t) => t.hasQuiz).length,
+        doneTopics: topics.filter((t) => t.hasQuiz && t.latestScore !== null).length,
+      };
+    });
 
     res.json({ courses });
   }),
@@ -153,6 +306,14 @@ router.get(
   handle(async (req, res) => {
     const [courses, enrollments] = await Promise.all([
       prisma.course.findMany({
+        // Everything published, the reader's own courses included. This once
+        // filtered those out on the grounds that enrolling on them is refused
+        // anyway — but that mistook the page for an enrolment form. It is the
+        // organisation's catalogue, and a lead asking "what do we teach?"
+        // should not get an answer with their own course missing from it.
+        //
+        // What changes for those rows is the button, not the listing: `staff`
+        // below tells the screen to show where they stand instead.
         where: { isPublished: true },
         orderBy: { title: 'asc' },
         select: {
@@ -161,7 +322,10 @@ router.get(
           title: true,
           description: true,
           durationWeeks: true,
+          ownerId: true,
           owner: { select: { fullName: true } },
+          category: { select: { id: true, name: true, slug: true, position: true } },
+          team: { where: { userId: req.user.id }, select: { userId: true } },
           _count: { select: { topics: true } },
         },
       }),
@@ -196,13 +360,79 @@ router.get(
         title: course.title,
         description: course.description,
         durationWeeks: course.durationWeeks,
-        trainerName: course.owner.fullName,
+        // The response is an explicit shape rather than a spread, so anything
+        // added to the select above has to be named here too or it is silently
+        // dropped — which is exactly what happened to this line the first time.
+        category: course.category,
+        trainerName: course.owner?.fullName ?? null,
         topicCount: course._count.topics,
+        // 'lead' | 'trainer' | null — where the reader stands on this course as
+        // staff, which is a different axis from `subscription` below. Nobody is
+        // ever both: you cannot be enrolled on a course you run.
+        staff:
+          course.ownerId === req.user.id ? 'lead' : course.team.length > 0 ? 'trainer' : null,
         // 'none' | 'pending' | 'active'
         subscription: statusByCourse.get(course.id) ?? 'none',
         allottedTopics: allottedCount.get(course.id) ?? 0,
       })),
     });
+  }),
+);
+
+/**
+ * Pausing a course, and picking it up again.
+ *
+ * The deadline moves by exactly the days lost, so a candidate pulled onto an
+ * urgent project is not punished for it — which is the only reason to have a
+ * pause rather than telling people to ask for an extension.
+ *
+ * Whole days only, and rounded down: pausing over lunch should buy nobody a
+ * day, and the alternative is a deadline that drifts by hours every time.
+ */
+router.post(
+  '/courses/:courseId/pause',
+  handle(async (req, res) => {
+    const enrolment = await prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId: req.user.id, courseId: req.params.courseId } },
+    });
+    if (!enrolment || enrolment.status !== 'active') {
+      throw new AppError(404, 'You are not on that course');
+    }
+    if (enrolment.pausedAt) throw new AppError(409, 'That course is already paused');
+    if (enrolment.completedAt) throw new AppError(409, 'That course is already finished');
+
+    const updated = await prisma.enrollment.update({
+      where: { id: enrolment.id },
+      data: { pausedAt: new Date() },
+    });
+
+    res.json({ pausedAt: updated.pausedAt });
+  }),
+);
+
+router.post(
+  '/courses/:courseId/resume',
+  handle(async (req, res) => {
+    const enrolment = await prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId: req.user.id, courseId: req.params.courseId } },
+    });
+    if (!enrolment?.pausedAt) throw new AppError(409, 'That course is not paused');
+
+    const lost = Math.max(0, daysBetween(enrolment.pausedAt, new Date()));
+
+    const updated = await prisma.enrollment.update({
+      where: { id: enrolment.id },
+      data: {
+        pausedAt: null,
+        pausedDays: enrolment.pausedDays + lost,
+        // Only a course that had a deadline gets one moved.
+        ...(enrolment.dueAt && {
+          dueAt: new Date(enrolment.dueAt.getTime() + lost * 86400000),
+        }),
+      },
+    });
+
+    res.json({ resumed: true, daysPaused: lost, dueAt: updated.dueAt });
   }),
 );
 
@@ -214,6 +444,10 @@ router.post(
       where: { id: req.params.courseId, isPublished: true },
     });
     if (!course) throw new AppError(404, 'Course not found');
+
+    // Says "you lead this" rather than letting the request sit in an inbox the
+    // requester is the one who reads.
+    await assertNotCourseStaff(course.id, [req.user.id]);
 
     const existing = await prisma.enrollment.findUnique({
       where: { userId_courseId: { userId: req.user.id, courseId: course.id } },
@@ -255,8 +489,15 @@ router.delete(
   }),
 );
 
+const star = (what) =>
+  z.number().int().min(1, `Give ${what} a rating from 1 to 5`).max(5);
+
 const feedbackSchema = z.object({
-  rating: z.number().int().min(1, 'Give a rating from 1 to 5').max(5),
+  rating: star('the course'),
+  // Nullable rather than merely optional, so a candidate revising their
+  // feedback can take a rating back off as well as change it.
+  contentRating: star('the material').nullable().optional(),
+  durationRating: star('the length').nullable().optional(),
   comment: z.string().trim().max(2000).optional(),
 });
 
@@ -275,7 +516,13 @@ router.get(
   handle(async (req, res) => {
     const feedback = await prisma.courseFeedback.findUnique({
       where: { userId_courseId: { userId: req.user.id, courseId: req.params.courseId } },
-      select: { rating: true, comment: true, updatedAt: true },
+      select: {
+        rating: true,
+        contentRating: true,
+        durationRating: true,
+        comment: true,
+        updatedAt: true,
+      },
     });
     res.json({ feedback });
   }),
@@ -290,14 +537,30 @@ router.put(
 
     const feedback = await prisma.courseFeedback.upsert({
       where: { userId_courseId: { userId: req.user.id, courseId: req.params.courseId } },
-      update: { rating: input.rating, comment: input.comment ?? null },
+      // Written out in full on both branches rather than spread: every value
+      // is set every time, so revising feedback down to just an overall clears
+      // the breakdown rather than leaving yesterday's numbers behind it.
+      update: {
+        rating: input.rating,
+        contentRating: input.contentRating ?? null,
+        durationRating: input.durationRating ?? null,
+        comment: input.comment ?? null,
+      },
       create: {
         userId: req.user.id,
         courseId: req.params.courseId,
         rating: input.rating,
+        contentRating: input.contentRating ?? null,
+        durationRating: input.durationRating ?? null,
         comment: input.comment ?? null,
       },
-      select: { rating: true, comment: true, updatedAt: true },
+      select: {
+        rating: true,
+        contentRating: true,
+        durationRating: true,
+        comment: true,
+        updatedAt: true,
+      },
     });
 
     res.json({ feedback });
@@ -339,7 +602,15 @@ router.get(
       }),
       prisma.enrollment.findMany({
         where: { userId: req.user.id },
-        select: { courseId: true, enrolledAt: true, startedAt: true, completedAt: true },
+        select: {
+          courseId: true,
+          enrolledAt: true,
+          startedAt: true,
+          completedAt: true,
+          dueAt: true,
+          pausedAt: true,
+          pausedDays: true,
+        },
       }),
     ]);
 
@@ -423,6 +694,9 @@ router.get(
         dates: {
           enrolledAt: dates?.enrolledAt ?? null,
           startedAt: dates?.startedAt ?? null,
+          dueAt: dates?.dueAt ?? null,
+          pausedAt: dates?.pausedAt ?? null,
+          pausedDays: dates?.pausedDays ?? 0,
           completedAt: dates?.completedAt ?? null,
         },
         summary: {
@@ -517,14 +791,27 @@ router.get(
     const attemptsLeft =
       quiz.maxAttempts == null ? null : Math.max(0, quiz.maxAttempts - attempts.length);
 
+    // Ordered for this candidate's next sitting. The seed is the attempt they
+    // are about to make — the same number the submit route works out for
+    // itself — so the paper holds still across a refresh and comes back
+    // differently on a retake.
+    const paper = shuffleQuizFor(quiz, {
+      userId: req.user.id,
+      attemptNumber: attempts.length + 1,
+      count: quiz.questionsPerAttempt,
+    });
+
     res.json({
       quiz: {
         id: quiz.id,
         title: quiz.title,
         maxAttempts: quiz.maxAttempts,
         passPercentage: Number(quiz.passPercentage),
-        questions: quiz.questions,
-        totalMarks: quiz.questions.reduce((sum, q) => sum + q.marks, 0),
+        questions: paper.questions,
+        // The paper's marks, not the bank's. A 50-question bank drawn down to
+        // 12 is a 12-question quiz as far as the candidate is concerned, and
+        // showing the bank's total would promise a paper they never get.
+        totalMarks: paper.questions.reduce((sum, q) => sum + q.marks, 0),
       },
       attempts,
       attemptsLeft,
@@ -543,59 +830,9 @@ router.get(
 router.get(
   '/attempts/:attemptId/review',
   handle(async (req, res) => {
-    const attempt = await prisma.attempt.findFirst({
-      // Scoped to the caller — one candidate can never review another's attempt.
-      where: { id: req.params.attemptId, candidateId: req.user.id, status: 'scored' },
-      include: {
-        quiz: {
-          include: {
-            topic: { select: { id: true, title: true } },
-            questions: {
-              orderBy: { position: 'asc' },
-              include: { options: { orderBy: { position: 'asc' } } },
-            },
-          },
-        },
-        answers: { include: { selectedOptions: true } },
-      },
-    });
-
-    if (!attempt) throw new AppError(404, 'Attempt not found');
-
-    const answerByQuestion = new Map(attempt.answers.map((a) => [a.questionId, a]));
-
-    const questions = attempt.quiz.questions.map((question) => {
-      const answer = answerByQuestion.get(question.id);
-      const chosen = new Set((answer?.selectedOptions ?? []).map((s) => s.optionId));
-
-      return {
-        id: question.id,
-        prompt: question.prompt,
-        type: question.type,
-        marks: question.marks,
-        awardedMarks: answer?.awardedMarks ?? 0,
-        isCorrect: answer?.isCorrect ?? false,
-        options: question.options.map((option) => ({
-          id: option.id,
-          label: option.label,
-          isCorrect: option.isCorrect,
-          selected: chosen.has(option.id),
-        })),
-      };
-    });
-
-    res.json({
-      attempt: {
-        id: attempt.id,
-        attemptNumber: attempt.attemptNumber,
-        totalScore: attempt.totalScore,
-        maxScore: attempt.maxScore,
-        percentage: Number(attempt.percentage),
-        submittedAt: attempt.submittedAt,
-        topicTitle: attempt.quiz.topic.title,
-      },
-      questions,
-    });
+    // Scoped to the caller — one candidate can never review another's attempt.
+    // Staff reach the same shaping through /api/quizzes, gated on the course.
+    res.json(await buildAttemptReview(req.params.attemptId, { candidateId: req.user.id }));
   }),
 );
 
@@ -630,9 +867,29 @@ router.post(
       throw new AppError(409, `You have used all ${quiz.maxAttempts} attempts for this quiz`);
     }
 
+    /**
+     * The exact paper this candidate was served, rebuilt rather than trusted.
+     *
+     * Selection is deterministic on candidate, quiz and attempt number, and
+     * `priorAttempts` here is the same count the GET used — so the server can
+     * work out which twelve of fifty questions it handed over without having
+     * stored anything, and without believing the browser about it.
+     *
+     * Scoring against this rather than the whole bank is what makes the draw
+     * safe: score it against all fifty and every candidate fails by default,
+     * marked absent on the thirty-eight they were never shown.
+     */
+    const paper = shuffleQuizFor(quiz, {
+      userId: req.user.id,
+      attemptNumber: priorAttempts + 1,
+      count: quiz.questionsPerAttempt,
+    });
+
     // Reject answers that reference another quiz's questions, or options that
-    // don't belong to the question they were submitted under.
-    const questionsById = new Map(quiz.questions.map((q) => [q.id, q]));
+    // don't belong to the question they were submitted under. Scoped to the
+    // paper, so an answer to a question this candidate was not asked is
+    // refused rather than quietly counted.
+    const questionsById = new Map(paper.questions.map((q) => [q.id, q]));
     const answersByQuestionId = new Map();
 
     for (const answer of answers) {
@@ -649,7 +906,7 @@ router.post(
     }
 
     const { results, totalScore, maxScore, percentage } = scoreAttempt(
-      quiz.questions,
+      paper.questions,
       answersByQuestionId,
     );
 

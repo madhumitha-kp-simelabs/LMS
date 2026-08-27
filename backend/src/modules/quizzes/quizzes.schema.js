@@ -24,5 +24,10 @@ export const updateQuizSchema = z.object({
   // null means unlimited retakes.
   maxAttempts: z.number().int().min(1).max(50).nullable().optional(),
   passPercentage: z.number().min(0).max(100).optional(),
+  // How many of the bank's questions one sitting draws. Null serves them all.
+  // Not checked against how many questions exist: a lead reasonably decides
+  // "twelve per sitting" before writing the fifty they will draw from, and
+  // serving falls back to everything until the bank catches up.
+  questionsPerAttempt: z.number().int().min(1).max(200).nullable().optional(),
   isPublished: z.boolean().optional(),
 });

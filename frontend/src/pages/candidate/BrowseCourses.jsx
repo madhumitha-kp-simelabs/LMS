@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Button, Card, Empty } from '../../components/ui';
+import { groupByCategory, toneForCategory, useCollapsedCategories } from '../../lib/categories';
+import CategoryHeading from '../../components/CategoryHeading';
 
 /**
  * The course catalogue.
@@ -14,6 +16,7 @@ export default function BrowseCourses() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const folds = useCollapsedCategories('lt.browse.collapsed');
   const [busyId, setBusyId] = useState(null);
 
   async function load() {
@@ -63,7 +66,8 @@ export default function BrowseCourses() {
     <div>
       <h1 className="text-xl font-semibold text-slate-900">Browse courses</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Everything on offer. Ask to join a course and your trainer will give you access.
+        Every course in the organisation, by subject. Ask to join one and its lead will give you
+        access; the ones you already work on are marked.
       </p>
 
       <div className="mt-4">
@@ -75,15 +79,30 @@ export default function BrowseCourses() {
           <Empty>No courses have been published yet.</Empty>
         </div>
       ) : (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          {courses.map((course) => (
-            <CourseCard
-              key={course.id}
-              course={course}
-              busy={busyId === course.id}
-              onSubscribe={() => subscribe(course.id)}
-              onWithdraw={() => withdraw(course.id)}
-            />
+        <div className="mt-6 space-y-6">
+          {groupByCategory(courses).map((group) => (
+            <section key={group.category.id ?? 'none'}>
+              <CategoryHeading
+                category={group.category}
+                count={group.courses.length}
+                open={folds.isOpen(group.category)}
+                onToggle={() => folds.toggle(group.category)}
+              />
+
+              {folds.isOpen(group.category) && (
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                {group.courses.map((course) => (
+                  <CourseCard
+                    key={course.id}
+                    course={course}
+                    busy={busyId === course.id}
+                    onSubscribe={() => subscribe(course.id)}
+                    onWithdraw={() => withdraw(course.id)}
+                  />
+                ))}
+              </div>
+              )}
+            </section>
           ))}
         </div>
       )}
@@ -103,8 +122,15 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
           <p className="text-base font-semibold tracking-wide text-indigo-600">{course.code}</p>
           <h2 className="mt-0.5 font-semibold text-slate-900">{course.title}</h2>
         </div>
-        {subscription === 'active' && <Badge tone="green">Enrolled</Badge>}
-        {subscription === 'pending' && <Badge tone="amber">Requested</Badge>}
+        <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+          {course.category && (
+            <Badge tone={toneForCategory(course.category)}>{course.category.name}</Badge>
+          )}
+          {course.staff === 'lead' && <Badge tone="indigo">You lead this</Badge>}
+          {course.staff === 'trainer' && <Badge tone="sky">On the team</Badge>}
+          {subscription === 'active' && <Badge tone="green">Enrolled</Badge>}
+          {subscription === 'pending' && <Badge tone="amber">Requested</Badge>}
+        </span>
       </div>
 
       {course.description && (
@@ -120,10 +146,20 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
           </>
         )}
         <span className="text-slate-300">·</span>
-        <span>Trainer: {course.trainerName}</span>
+        <span>{course.trainerName ? `Trainer: ${course.trainerName}` : 'No lead yet'}</span>
       </p>
 
       <div className="mt-auto pt-4">
+        {/* Checked before subscription, because staff never have one — and a
+            course you run is somewhere to go, not somewhere to apply. */}
+        {course.staff ? (
+          <Link to={`/trainer/courses/${course.id}`}>
+            <Button variant="subtle">
+              {course.staff === 'lead' ? 'Open your course' : 'Open the course'}
+            </Button>
+          </Link>
+        ) : (
+          <>
         {subscription === 'none' && (
           <Button onClick={onSubscribe} disabled={busy}>
             {busy ? 'Sending…' : 'Ask to join'}
@@ -153,6 +189,8 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
               You&apos;re enrolled. Your trainer hasn&apos;t shared any topics with you yet.
             </p>
           ))}
+          </>
+        )}
       </div>
     </Card>
   );

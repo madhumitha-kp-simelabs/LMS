@@ -9,9 +9,14 @@ export const createCourseSchema = z.object({
     .max(20)
     .regex(/^[A-Z0-9-]+$/, 'Use letters, numbers and hyphens only'),
   title: z.string().trim().min(3).max(200),
-  description: z.string().trim().max(2000).optional(),
+  // Nullable, not merely optional: an emptied box has to be able to clear the
+  // field, while an omitted one means "leave it alone".
+  description: z.string().trim().max(2000).nullable().optional(),
   // Nullable so a trainer can clear it again, not just set it.
   durationWeeks: z.number().int().min(1).max(104).nullable().optional(),
+  // What the course is about. Nullable on the same rule: an emptied picker
+  // takes the course out of its category rather than being ignored.
+  categoryId: z.string().uuid().nullable().optional(),
   isPublished: z.boolean().optional(),
 });
 

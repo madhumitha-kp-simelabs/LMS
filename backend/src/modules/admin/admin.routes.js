@@ -5,6 +5,8 @@ import { AppError } from '../../middleware/error.js';
 // Imported by name, not as a namespace: the overview handler below has its own
 // local `courses`, and shadowing the module would be a trap waiting to happen.
 import { assertNotEnrolled, createCourseForLead } from '../courses/courses.service.js';
+import * as projects from '../projects/projects.service.js';
+import { allotProjectSchema } from '../projects/projects.schema.js';
 import {
   addTeamMemberSchema,
   createAllotmentSchema,
@@ -92,6 +94,7 @@ router.get(
         orderBy: { createdAt: 'desc' },
         include: {
           owner: { select: { id: true, fullName: true } },
+          category: { select: { id: true, name: true, slug: true, position: true } },
           _count: { select: { topics: true } },
           enrollments: { select: { userId: true, status: true } },
           feedback: { select: { rating: true } },
@@ -108,6 +111,9 @@ router.get(
       prisma.user.findMany({
         orderBy: { fullName: 'asc' },
         include: {
+          // What a candidate is being trained as, for the grouping on the
+          // Candidates tab. Null until an administrator files them.
+          team: { select: { id: true, name: true, slug: true, position: true } },
           _count: {
             select: {
               coursesOwned: true,
@@ -167,6 +173,7 @@ router.get(
         id: course.id,
         code: course.code,
         title: course.title,
+        category: course.category,
         isPublished: course.isPublished,
         createdAt: course.createdAt,
         // `trainer` is the lead — the course's owner. `team` is everyone else
@@ -271,6 +278,7 @@ router.get(
           id: u.id,
           fullName: u.fullName,
           email: u.email,
+          team: u.team,
           enrolled: coursesByCandidate.get(u.id) ?? [],
           isActive: u.isActive,
           createdAt: u.createdAt,
@@ -446,6 +454,63 @@ router.get(
         },
       },
     });
+  }),
+);
+
+/**
+ * Every project across every course, with who holds each one — the list the
+ * allotment screen works from.
+ */
+router.get(
+  '/projects',
+  handle(async (req, res) => {
+    const rows = await prisma.project.findMany({
+      orderBy: [{ course: { code: 'asc' } }, { position: 'asc' }],
+      include: {
+        course: { select: { id: true, code: true, title: true, isPublished: true } },
+        allotments: {
+          orderBy: { allottedAt: 'asc' },
+          include: { user: { select: { id: true, fullName: true, email: true } } },
+        },
+      },
+    });
+
+    res.json({
+      projects: rows.map(({ allotments, ...project }) => ({
+        ...project,
+        candidates: allotments.map((a) => ({
+          id: a.user.id,
+          fullName: a.user.fullName,
+          email: a.user.email,
+          allottedAt: a.allottedAt,
+          completedAt: a.completedAt,
+        })),
+        allotted: allotments.length,
+        completed: allotments.filter((a) => a.completedAt).length,
+      })),
+    });
+  }),
+);
+
+/**
+ * Hands a project to candidates. The lead writes the brief; who does it is the
+ * admin's decision, which is why this lives here and not on /api/projects.
+ */
+router.post(
+  '/projects/:projectId/allotments',
+  handle(async (req, res) => {
+    const { candidateIds } = allotProjectSchema.parse(req.body);
+    const result = await projects.allot(req.user, req.params.projectId, candidateIds);
+    res.status(201).json(result);
+  }),
+);
+
+/** Takes it back off one candidate, losing their done mark with it. */
+router.delete(
+  '/projects/:projectId/allotments/:userId',
+  handle(async (req, res) => {
+    await projects.withdraw(req.params.projectId, req.params.userId);
+    res.status(204).end();
   }),
 );
 

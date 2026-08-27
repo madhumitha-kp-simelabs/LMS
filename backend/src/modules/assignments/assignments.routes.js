@@ -24,14 +24,24 @@ const allotSchema = z.object({
   candidateIds: z.array(z.string().uuid()).min(1, 'Pick at least one candidate'),
 });
 
-/** Every candidate account, for the allotment picker. */
+/**
+ * Everyone who can be given work, for the allotment picker.
+ *
+ * Leads are in the list because a lead can be taught a course they do not run.
+ * Their role rides along so the picker can label them — handing course work to
+ * someone who elsewhere marks it is a thing you want to have noticed you were
+ * doing. Which of them are ineligible for this particular course is settled by
+ * assertNotCourseStaff on the way in, not by hiding them here.
+ */
 router.get(
   '/candidates',
   handle(async (req, res) => {
     const candidates = await prisma.user.findMany({
-      where: { role: 'candidate', isActive: true },
-      select: { id: true, fullName: true, email: true },
-      orderBy: { fullName: 'asc' },
+      where: { role: { in: ['candidate', 'lead'] }, isActive: true },
+      select: { id: true, fullName: true, email: true, role: true },
+      // Candidates first, then leads, alphabetical within each — the ordinary
+      // case stays at the top of a long list.
+      orderBy: [{ role: 'asc' }, { fullName: 'asc' }],
     });
     res.json({ candidates });
   }),
@@ -59,11 +69,11 @@ router.post(
     const { candidateIds } = allotSchema.parse(req.body);
 
     const candidates = await prisma.user.findMany({
-      where: { id: { in: candidateIds }, role: 'candidate' },
+      where: { id: { in: candidateIds }, role: { in: ['candidate', 'lead'] } },
       select: { id: true },
     });
     if (candidates.length !== candidateIds.length) {
-      throw new AppError(422, 'One or more of those accounts is not an active candidate');
+      throw new AppError(422, 'One or more of those accounts cannot be given course work');
     }
 
     await assertNotCourseStaff(topic.courseId, candidateIds);

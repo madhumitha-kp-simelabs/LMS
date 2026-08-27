@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Card, Empty } from '../../components/ui';
+import { groupByCategory, toneForCategory, useCollapsedCategories } from '../../lib/categories';
+import CategoryHeading from '../../components/CategoryHeading';
 
 /**
  * What a course is to the person looking at it. Leading one and working on
@@ -41,6 +43,7 @@ export default function CourseList() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const folds = useCollapsedCategories('lt.courses.collapsed');
 
   async function load() {
     try {
@@ -77,8 +80,21 @@ export default function CourseList() {
             them — once one is yours it appears here.
           </Empty>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {courses.map((course) => (
+          // Grouped even when there is one group: a lead running four Frontend
+          // courses should see the same shape as one running four subjects,
+          // rather than the page changing structure as the list grows.
+          groupByCategory(courses).map((group) => (
+            <section key={group.category.id ?? 'none'}>
+              <CategoryHeading
+                category={group.category}
+                count={group.courses.length}
+                open={folds.isOpen(group.category)}
+                onToggle={() => folds.toggle(group.category)}
+              />
+
+              {folds.isOpen(group.category) && (
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                {group.courses.map((course) => (
               <Link key={course.id} to={`/trainer/courses/${course.id}`}>
                 <Card
                   accent={MY_ROLE[course.relation]?.accent ?? 'indigo'}
@@ -93,9 +109,16 @@ export default function CourseList() {
                     </div>
                     {/* Only the course's own state belongs here. What the course
                         is to you is said once, below, in words. */}
-                    <Badge tone={course.isPublished ? 'green' : 'amber'}>
-                      {course.isPublished ? 'Published' : 'Draft'}
-                    </Badge>
+                    <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                      {course.category && (
+                        <Badge tone={toneForCategory(course.category)}>
+                          {course.category.name}
+                        </Badge>
+                      )}
+                      <Badge tone={course.isPublished ? 'green' : 'amber'}>
+                        {course.isPublished ? 'Published' : 'Draft'}
+                      </Badge>
+                    </span>
                   </div>
 
                   <MyRole relation={course.relation} />
@@ -126,8 +149,11 @@ export default function CourseList() {
                   </p>
                 </Card>
               </Link>
-            ))}
-          </div>
+                ))}
+              </div>
+              )}
+            </section>
+          ))
         )}
       </div>
     </div>

@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Card, Empty, toneForScore } from '../../components/ui';
 import CompletionSummary from './CompletionSummary';
+import CourseNav from './CourseNav';
+import AttemptReview from '../../components/AttemptReview';
+import OtherCourses from '../../components/OtherCourses';
 
 const formatDate = (value) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
@@ -46,11 +49,9 @@ export default function CourseProgress() {
 
   return (
     <div>
-      <Link to={`/trainer/courses/${courseId}`} className="text-sm text-indigo-600 hover:text-indigo-700">
-        ← Back to course
-      </Link>
+      <CourseNav courseId={courseId} work={course?.work} />
 
-      <div className="mt-4">
+      <div className="mt-5">
         <p className="text-base font-semibold tracking-wide text-indigo-600">{course?.code}</p>
         <h1 className="mt-1 text-2xl font-semibold text-slate-900">Candidate progress</h1>
         <p className="mt-1 text-sm text-slate-500">{course?.title}</p>
@@ -150,6 +151,10 @@ function Tile({ label, value, accent }) {
 }
 
 function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
+  // Which attempt is open, if any. Held here rather than on the page so
+  // collapsing a candidate puts their answers away with them.
+  const [reviewing, onReview] = useState(null);
+
   const status = candidate.completedAt
     ? { tone: 'green', label: `Completed ${formatDate(candidate.completedAt)}` }
     : candidate.startedAt
@@ -157,7 +162,7 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
       : { tone: 'slate', label: 'Not started' };
 
   return (
-    <Card className="p-0">
+    <Card flush>
       <button onClick={onToggle} className="w-full px-6 py-4 text-left">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
@@ -206,28 +211,57 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
               </p>
               <ul className="space-y-1.5">
                 {candidate.topics.map((topic) => (
-                  <li
-                    key={topic.topicId}
-                    className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 px-4 py-2.5"
-                  >
-                    <span className="min-w-0 text-sm text-slate-800">
-                      <span className="text-slate-400">{topic.position}.</span> {topic.title}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-3 text-xs text-slate-500">
-                      {!topic.hasQuiz ? (
-                        <span className="text-slate-400">no quiz</span>
-                      ) : topic.percentage === null ? (
-                        <span className="text-amber-700">not attempted</span>
-                      ) : (
-                        <>
-                          <span>
-                            {topic.totalScore}/{topic.maxScore} · {topic.attempts} attempt
-                            {topic.attempts === 1 ? '' : 's'}
-                          </span>
-                          <Badge tone={toneForScore(topic.percentage)}>{topic.percentage}%</Badge>
-                        </>
-                      )}
-                    </span>
+                  <li key={topic.topicId}>
+                    <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 px-4 py-2.5">
+                      <span className="min-w-0 text-sm text-slate-800">
+                        <span className="text-slate-400">{topic.position}.</span> {topic.title}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-3 text-xs text-slate-500">
+                        {!topic.hasQuiz ? (
+                          <span className="text-slate-400">no quiz</span>
+                        ) : topic.percentage === null ? (
+                          <span className="text-amber-700">not attempted</span>
+                        ) : (
+                          <>
+                            <span>
+                              {topic.totalScore}/{topic.maxScore} · {topic.attempts} attempt
+                              {topic.attempts === 1 ? '' : 's'}
+                            </span>
+                            <Badge tone={topic.passed ? 'green' : 'rose'}>
+                              {topic.percentage}%
+                            </Badge>
+                            {topic.passMark != null && (
+                              <span className="text-slate-400">pass {topic.passMark}%</span>
+                            )}
+                            {/* The score says how much was lost; this says
+                                where. Offered on every attempted topic, not
+                                only the weak ones — a pass can still hide a
+                                misunderstanding worth a word. */}
+                            <button
+                              onClick={() =>
+                                onReview(reviewing === topic.attemptId ? null : topic.attemptId)
+                              }
+                              className="text-indigo-600 underline transition hover:text-indigo-700"
+                            >
+                              {reviewing === topic.attemptId ? 'Hide answers' : 'View answers'}
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    </div>
+
+                    {/* Opened in place, under the topic it belongs to, rather
+                        than replacing the page — the point is to read it beside
+                        the rest of the candidate's record. */}
+                    {reviewing && reviewing === topic.attemptId && (
+                      <div className="mt-2">
+                        <AttemptReview
+                          attemptId={topic.attemptId}
+                          staff
+                          onClose={() => onReview(null)}
+                        />
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -250,7 +284,14 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
                       className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50/50 px-4 py-2.5 text-sm text-rose-900"
                     >
                       <span>{topic.title}</span>
-                      <span className="shrink-0 font-medium">{topic.percentage}%</span>
+                      {/* Against what it needed, not on its own — 48% is a
+                          near miss at 50 and nowhere near at 80. */}
+                      <span className="shrink-0 font-medium">
+                        {topic.percentage}%
+                        {topic.passMark != null && (
+                          <span className="font-normal text-rose-700/70"> of {topic.passMark}%</span>
+                        )}
+                      </span>
                     </li>
                   ))}
                   {candidate.notAttempted.map((topic) => (
@@ -264,6 +305,13 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
                   ))}
                 </ul>
               )}
+
+              {/* Directly under the weak spots, because it is the first thing
+                  that explains them. */}
+              <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Also studying
+              </p>
+              <OtherCourses courses={candidate.otherCourses} />
 
               <p className="mt-3 text-xs text-slate-500">
                 Enrolled {formatDate(candidate.enrolledAt)} · {candidate.topicsAllotted} topic

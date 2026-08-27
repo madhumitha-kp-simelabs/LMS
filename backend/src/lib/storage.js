@@ -30,29 +30,65 @@ export function materialTypeFor(mimeType) {
   return ACCEPTED.get(mimeType)?.[0] ?? null;
 }
 
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    try {
-      await mkdir(UPLOAD_DIR, { recursive: true });
-      cb(null, UPLOAD_DIR);
-    } catch (err) {
-      cb(err);
-    }
-  },
-  // Never reuse the uploaded filename: it is attacker-controlled and could
-  // contain path separators. The original is kept in the database instead.
-  filename: (req, file, cb) => {
-    const ext = ACCEPTED.get(file.mimetype)?.[1] ?? '';
-    cb(null, `${randomUUID()}${ext}`);
-  },
-});
+/**
+ * What a candidate may hand in for a project. Wider than course material,
+ * because the work itself varies: a written charter, a zipped build, a
+ * screenshot of a running app.
+ */
+const SUBMISSION_ACCEPTED = new Map([
+  ['application/pdf', '.pdf'],
+  ['application/msword', '.doc'],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'],
+  ['application/vnd.ms-powerpoint', '.ppt'],
+  ['application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx'],
+  ['application/vnd.ms-excel', '.xls'],
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'],
+  ['application/zip', '.zip'],
+  ['application/x-zip-compressed', '.zip'],
+  ['image/png', '.png'],
+  ['image/jpeg', '.jpg'],
+  ['text/plain', '.txt'],
+]);
+
+/** Both uploaders write to the same place; only the accepted types differ. */
+function diskStorage(extensionFor) {
+  return multer.diskStorage({
+    destination: async (req, file, cb) => {
+      try {
+        await mkdir(UPLOAD_DIR, { recursive: true });
+        cb(null, UPLOAD_DIR);
+      } catch (err) {
+        cb(err);
+      }
+    },
+    // Never reuse the uploaded filename: it is attacker-controlled and could
+    // contain path separators. The original is kept in the database instead.
+    filename: (req, file, cb) => cb(null, `${randomUUID()}${extensionFor(file.mimetype) ?? ''}`),
+  });
+}
 
 export const uploadMaterial = multer({
-  storage,
+  storage: diskStorage((mime) => ACCEPTED.get(mime)?.[1]),
   limits: { fileSize: MAX_FILE_BYTES, files: 1 },
   fileFilter: (req, file, cb) => {
     if (!ACCEPTED.has(file.mimetype)) {
       return cb(new AppError(415, 'Only PDF, PPT and PPTX files are accepted'));
+    }
+    cb(null, true);
+  },
+}).single('file');
+
+export const uploadSubmission = multer({
+  storage: diskStorage((mime) => SUBMISSION_ACCEPTED.get(mime)),
+  limits: { fileSize: MAX_FILE_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (!SUBMISSION_ACCEPTED.has(file.mimetype)) {
+      return cb(
+        new AppError(
+          415,
+          'Accepted: PDF, Word, PowerPoint, Excel, ZIP, PNG, JPG or plain text. For anything else, hand in a link instead.',
+        ),
+      );
     }
     cb(null, true);
   },

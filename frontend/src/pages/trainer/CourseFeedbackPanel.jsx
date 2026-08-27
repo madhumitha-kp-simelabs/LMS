@@ -49,6 +49,16 @@ export default function CourseFeedbackPanel({ courseId, onError }) {
         </div>
       </div>
 
+      {/* What the overall is made of. A course at 3.5 because the material is
+          weak needs a different fix from one at 3.5 because it runs too long,
+          and the single number cannot say which. */}
+      {(summary.content || summary.duration) && (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <Dimension label="Content" stat={summary.content} />
+          <Dimension label="Duration" stat={summary.duration} />
+        </div>
+      )}
+
       {/* Distribution, highest star first — shows whether an average hides a split. */}
       <div className="mt-4 space-y-1">
         {[5, 4, 3, 2, 1].map((star) => {
@@ -93,5 +103,28 @@ export default function CourseFeedbackPanel({ courseId, onError }) {
         ))}
       </ul>
     </Card>
+  );
+}
+
+/**
+ * One dimension's average. Absent rather than zero when nobody has rated it —
+ * "no ratings yet" and "rated badly" must not look the same.
+ */
+function Dimension({ label, stat }) {
+  return (
+    <div className="rounded-lg border border-slate-200 px-3 py-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      {stat ? (
+        <p className="mt-1 flex items-baseline gap-2">
+          <span className="text-lg font-semibold text-slate-900">{stat.average}</span>
+          <Stars n={Math.round(stat.average)} />
+          <span className="text-xs text-slate-500">
+            from {stat.count} {stat.count === 1 ? 'person' : 'people'}
+          </span>
+        </p>
+      ) : (
+        <p className="mt-1 text-sm text-slate-400">Not rated yet</p>
+      )}
+    </div>
   );
 }

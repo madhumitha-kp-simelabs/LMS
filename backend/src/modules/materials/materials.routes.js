@@ -66,12 +66,20 @@ router.get(
     });
     if (!material) throw new AppError(404, 'Material not found');
 
-    if (req.user.role === 'candidate') {
-      const allotted = await prisma.topicAssignment.findUnique({
-        where: { userId_topicId: { userId: req.user.id, topicId: material.topicId } },
-      });
-      if (!allotted) throw new AppError(403, 'That material has not been shared with you');
-    } else {
+    // Allotment first, role second — and that order is the point. A lead
+    // learning a course they do not run reaches their material through exactly
+    // the assignment a candidate does; testing the role first would send them
+    // down the staff branch and refuse them, because on that course they are
+    // not staff. One lookup on a unique key is a cheap way to stop caring which
+    // hat the reader is wearing.
+    const allotted = await prisma.topicAssignment.findUnique({
+      where: { userId_topicId: { userId: req.user.id, topicId: material.topicId } },
+    });
+
+    if (!allotted) {
+      if (req.user.role === 'candidate') {
+        throw new AppError(403, 'That material has not been shared with you');
+      }
       // Staff read by the same rule as everywhere else: the course's lead,
       // anyone on its team, or an admin. Reading is open to the whole team even
       // when the topic is somebody else's duty.

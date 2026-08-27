@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Alert, Card, Empty } from '../../components/ui';
 import CourseFeedback from './CourseFeedback';
+import SessionRequest from './SessionRequest';
+import CourseSchedule from './CourseSchedule';
 
 /**
  * Score analysis for the signed-in candidate.
@@ -32,12 +34,19 @@ export default function MyProgress() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Pausing, resuming and asking for time all move dates this page prints, so
+  // it has to be reloadable rather than fetched once.
+  const load = useCallback(
+    () =>
+      api('/learn/progress')
+        .then(({ courses }) => setCourses(courses))
+        .catch((err) => setError(err.message)),
+    [],
+  );
+
   useEffect(() => {
-    api('/learn/progress')
-      .then(({ courses }) => setCourses(courses))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+    load().finally(() => setLoading(false));
+  }, [load]);
 
   if (loading) return <p className="text-sm text-slate-500">Loading your results…</p>;
 
@@ -57,7 +66,7 @@ export default function MyProgress() {
       ) : (
         <div className="mt-6 space-y-8">
           {courses.map((course) => (
-            <CourseProgress key={course.id} course={course} />
+            <CourseProgress key={course.id} course={course} onChanged={load} />
           ))}
         </div>
       )}
@@ -65,7 +74,7 @@ export default function MyProgress() {
   );
 }
 
-function CourseProgress({ course }) {
+function CourseProgress({ course, onChanged }) {
   const { summary, topics } = course;
   const scored = topics.filter((t) => t.latest);
 
@@ -81,6 +90,13 @@ function CourseProgress({ course }) {
             You haven&apos;t taken any quizzes in this course yet. Your scores will appear here once
             you do.
           </Empty>
+          <CourseSchedule
+            course={{ id: course.id, ...course.dates }}
+            onChanged={onChanged}
+          />
+
+          <SessionRequest courseId={course.id} courseTitle={course.title} />
+
           <CourseFeedback courseId={course.id} courseTitle={course.title} />
         </div>
       ) : (
@@ -115,6 +131,13 @@ function CourseProgress({ course }) {
           </Card>
 
           <AttemptTable topics={topics.filter((t) => t.attemptCount > 0)} />
+
+          <CourseSchedule
+            course={{ id: course.id, ...course.dates }}
+            onChanged={onChanged}
+          />
+
+          <SessionRequest courseId={course.id} courseTitle={course.title} />
 
           <CourseFeedback courseId={course.id} courseTitle={course.title} />
         </div>

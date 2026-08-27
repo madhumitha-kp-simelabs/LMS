@@ -134,6 +134,10 @@ export async function removeFromCourse(user, courseId, userId) {
 export async function listCourses(user) {
   // Admins see everything. A trainer sees the courses they lead and the ones
   // they are on the team of — both are "my courses" from where they sit.
+  //
+  // A lead sees theirs and no more. What else the organisation teaches is a
+  // question for Browse courses, which answers it for everyone at once rather
+  // than turning this working list into a catalogue.
   const where =
     user.role === 'admin'
       ? {}
@@ -144,6 +148,7 @@ export async function listCourses(user) {
     orderBy: { createdAt: 'desc' },
     include: {
       owner: { select: { id: true, fullName: true } },
+      category: { select: { id: true, name: true, slug: true, position: true } },
       _count: { select: { topics: true, enrollments: true, team: true } },
       // Which of this course's topics are the viewer's duty, so the list can say
       // so without a request per course.
@@ -171,6 +176,7 @@ export async function getCourse(user, courseId) {
     where: { id: courseId },
     include: {
       owner: { select: { id: true, fullName: true } },
+      category: { select: { id: true, name: true, slug: true, position: true } },
       team: {
         orderBy: { addedAt: 'asc' },
         include: { user: { select: { id: true, fullName: true, email: true, isActive: true } } },
@@ -186,7 +192,9 @@ export async function getCourse(user, courseId) {
               id: true,
               title: true,
               isPublished: true,
-              _count: { select: { questions: true } },
+              // Attempts are counted so the screen can say what deleting a
+              // topic actually destroys — scored work, not just files.
+              _count: { select: { questions: true, attempts: true } },
             },
           },
           _count: { select: { assignments: true } },
@@ -195,9 +203,24 @@ export async function getCourse(user, courseId) {
     },
   });
 
+  // Counts for the course's tab row. Fetched here rather than by the nav
+  // itself because every one of those screens already loads the course — three
+  // cheap counts on a request that is happening anyway beats a second round
+  // trip on every tab, and a tab that cannot say "1 waiting" is a tab nobody
+  // clicks.
+  const projectWhere = { project: { courseId } };
+  const [projects, submissions, awaitingReview] = await Promise.all([
+    prisma.project.count({ where: { courseId } }),
+    prisma.projectAllotment.count({ where: { ...projectWhere, submittedAt: { not: null } } }),
+    prisma.projectAllotment.count({
+      where: { ...projectWhere, submittedAt: { not: null }, evaluatedAt: null },
+    }),
+  ]);
+
   return {
     ...course,
     team: course.team.map((row) => row.user),
+    work: { projects, submissions, awaitingReview },
     // The screen gates its own buttons on this rather than re-deriving the rules.
     viewer: { relation, canPublish: relation === 'admin' || relation === 'lead' },
   };
@@ -226,7 +249,10 @@ export async function createCourseForLead(ownerId, data, client = prisma) {
 
   return client.course.create({
     data: { ...data, ownerId },
-    include: { owner: { select: { id: true, fullName: true } } },
+    include: {
+      owner: { select: { id: true, fullName: true } },
+      category: { select: { id: true, name: true, slug: true, position: true } },
+    },
   });
 }
 

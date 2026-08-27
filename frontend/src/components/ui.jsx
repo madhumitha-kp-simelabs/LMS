@@ -76,7 +76,15 @@ export function Textarea({ label, className = '', ...props }) {
   );
 }
 
-export function Card({ accent, className = '', ...props }) {
+/**
+ * `flush` removes the padding, for cards whose content brings its own — a table,
+ * or rows with their own dividers running edge to edge.
+ *
+ * It has to be a prop rather than `className="p-0"`, which is what this used to
+ * be given and which silently did nothing: Tailwind emits `.p-0` before `.p-6`,
+ * so the padding here won on source order no matter what the caller passed.
+ */
+export function Card({ accent, flush = false, className = '', ...props }) {
   // A 3px top edge in the accent hue — enough to group and signal, not enough
   // to compete with the content.
   const accents = {
@@ -90,9 +98,9 @@ export function Card({ accent, className = '', ...props }) {
 
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white p-6 shadow-sm ${
-        accent ? accents[accent] : ''
-      } ${className}`}
+      className={`rounded-xl border border-slate-200 bg-white shadow-sm ${
+        flush ? '' : 'p-6'
+      } ${accent ? accents[accent] : ''} ${className}`}
       {...props}
     />
   );
@@ -128,7 +136,7 @@ export function Empty({ children }) {
  */
 export function Table({ headers, children }) {
   return (
-    <Card className="overflow-x-auto p-0">
+    <Card flush className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/60">

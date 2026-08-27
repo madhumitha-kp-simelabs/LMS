@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Alert, Badge, Button, Card, Empty } from '../../components/ui';
+import SessionQueue from './SessionQueue';
+import ExtensionQueue from './ExtensionQueue';
 
 const formatDate = (value) =>
   new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -11,14 +13,24 @@ const formatDate = (value) =>
 export default function Inbox() {
   const { user } = useAuth();
   const [requests, setRequests] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [extensions, setExtensions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const { requests } = await api('/allot/requests');
-      setRequests(requests);
+      const [joins, meetings, moreTime] = await Promise.all([
+        api('/allot/requests'),
+        // A trainer has no session or extension inbox; both endpoints answer
+        // with an empty one rather than a 403, so this needs no role test.
+        api('/sessions/inbox'),
+        api('/extensions/inbox'),
+      ]);
+      setRequests(joins.requests);
+      setSessions(meetings.sessions);
+      setExtensions(moreTime.extensions);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -68,23 +80,60 @@ export default function Inbox() {
     <div>
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Inbox</h1>
-        {requests.length > 0 && <Badge tone="amber">{requests.length} waiting</Badge>}
+        {requests.length + sessions.length + extensions.length > 0 && (
+          <Badge tone="amber">
+            {requests.length + sessions.length + extensions.length} waiting
+          </Badge>
+        )}
       </div>
-      <p className="mt-1 text-sm text-slate-500">
-        Candidates asking to join {user.role === 'admin' ? 'any course' : 'your courses'}.
-        Approving gives access to every topic in the course.
+      <p className="mt-1 max-w-2xl text-sm text-slate-500">
+        Candidates asking to join {user.role === 'admin' ? 'any course' : 'your courses'}, and
+        asking for time with you. Approving a join gives access to every topic in the course.
       </p>
 
       <div className="mt-4">
         <Alert>{error}</Alert>
       </div>
 
+      {/* Session requests first. Someone already on a course and stuck is more
+          urgent than someone waiting at the door — and the answer takes longer
+          to write, so burying it under a list of Approve buttons gets it left. */}
+      <SessionQueue
+        sessions={sessions}
+        onChanged={async () => {
+          await load();
+          window.dispatchEvent(new Event('inbox-changed'));
+        }}
+        onError={setError}
+      />
+
+      {/* After sessions, before joins. Somebody stuck needs you today; somebody
+          asking for time needs you before their deadline; somebody at the door
+          can wait a day without it costing them anything. */}
+      <ExtensionQueue
+        extensions={extensions}
+        onChanged={async () => {
+          await load();
+          window.dispatchEvent(new Event('inbox-changed'));
+        }}
+        onError={setError}
+      />
+
       {requests.length === 0 ? (
-        <div className="mt-6">
-          <Empty>Nothing waiting. New requests to join a course will appear here.</Empty>
-        </div>
+        sessions.length === 0 &&
+        extensions.length === 0 && (
+          <div className="mt-6">
+            <Empty>
+              Nothing waiting. Requests to join a course, for a session, or for more time appear
+              here.
+            </Empty>
+          </div>
+        )
       ) : (
         <div className="mt-6 space-y-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Asking to join
+          </h2>
           {[...byCourse.values()].map(({ course, people }) => (
             <Card key={course.id} accent="amber">
               <div className="flex flex-wrap items-baseline justify-between gap-2">

@@ -4,6 +4,7 @@ import { api, apiUpload, openMaterial } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import QuizSection from './QuizSection';
 import JoinRequests from './JoinRequests';
+import CourseNav from './CourseNav';
 import CourseFeedbackPanel from './CourseFeedbackPanel';
 import {
   Alert,
@@ -15,6 +16,8 @@ import {
   Textarea,
   formatBytes,
 } from '../../components/ui';
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function CourseDetail() {
   const { courseId } = useParams();
@@ -33,9 +36,12 @@ export default function CourseDetail() {
       ]);
       setCourse(course);
       setCandidates(candidates);
-      setSelectedTopicId((current) =>
-        keepSelection && current ? current : (course.topics[0]?.id ?? null),
-      );
+      setSelectedTopicId((current) => {
+        // A kept selection is only good while that topic still exists — after a
+        // deletion it would leave the panel blank beside a full sidebar.
+        const stillThere = keepSelection && course.topics.some((t) => t.id === current);
+        return stillThere ? current : (course.topics[0]?.id ?? null);
+      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -89,6 +95,10 @@ export default function CourseDetail() {
       </div>
 
       <div className="mt-3">
+        <CourseNav courseId={course.id} work={course.work} />
+      </div>
+
+      <div className="mt-4">
         <Alert>{error}</Alert>
       </div>
 
@@ -302,9 +312,6 @@ function PublishToggle({ course, leads, onChanged, onError }) {
   if (!leads) {
     return (
       <div className="flex shrink-0 items-center gap-3">
-        <Link to={`/trainer/courses/${course.id}/progress`}>
-          <Button variant="secondary">Candidate progress →</Button>
-        </Link>
         <p className="max-w-[15rem] text-xs leading-relaxed text-slate-500">
           {course.isPublished ? 'Visible to candidates' : 'Hidden from candidates'} ·{' '}
           {course.owner ? `${course.owner.fullName} publishes this course` : 'no lead yet'}
@@ -330,9 +337,6 @@ function PublishToggle({ course, leads, onChanged, onError }) {
 
   return (
     <div className="flex shrink-0 items-center gap-3">
-      <Link to={`/trainer/courses/${course.id}/progress`}>
-        <Button className="shadow-indigo-500/20">Candidate progress →</Button>
-      </Link>
       {/* The status badge lives beside the course title; this is only the action. */}
       <p className="whitespace-nowrap text-xs text-slate-500">
         {course.isPublished ? 'Visible to candidates' : 'Hidden from candidates'}
@@ -505,6 +509,24 @@ function CourseMeta({ course, leads, onChanged, onError }) {
           {open === 0 ? 'all work handed out' : `${open} job${open === 1 ? '' : 's'} unhanded`}
         </span>
       )}
+
+      {/* The one fact in this strip that is a job rather than a description, so
+          it is the one that is a link. Sits last: you read who is on the course
+          before you read what they are waiting on you for.
+
+          Only the lead gets it, because only the lead can act on it — `leads`
+          would be wrong here, since that admits admins, and an admin reading
+          "waiting for you" would go looking for a button they do not have. */}
+      {course.viewer.relation === 'lead' && course.work?.awaitingReview > 0 && (
+        <Link
+          to={`/trainer/courses/${course.id}/submissions`}
+          className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 font-medium text-amber-900 ring-1 ring-amber-200 transition hover:bg-amber-200"
+        >
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+          {course.work.awaitingReview} submission
+          {course.work.awaitingReview === 1 ? '' : 's'} waiting for you
+        </Link>
+      )}
     </div>
   );
 }
@@ -636,6 +658,64 @@ function DutyName({ label, person, me }) {
   );
 }
 
+/**
+ * Deleting a topic. It takes the material, the quiz and every attempt at that
+ * quiz with it, so the button says so before it does it — a second press is
+ * needed, and the first one lists exactly what disappears.
+ */
+function DeleteTopic({ topic, onChanged, onError }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Everything that goes when the topic does.
+  const losses = [
+    topic.materials.length > 0 && plural(topic.materials.length, 'file'),
+    topic.quiz?._count?.questions > 0 && plural(topic.quiz._count.questions, 'question'),
+    topic.quiz?._count?.attempts > 0 &&
+      `${plural(topic.quiz._count.attempts, 'quiz attempt')} by candidates`,
+    topic._count?.assignments > 0 &&
+      `access for ${plural(topic._count.assignments, 'candidate')}`,
+  ].filter(Boolean);
+
+  async function remove() {
+    setBusy(true);
+    try {
+      await api(`/courses/topics/${topic.id}`, { method: 'DELETE' });
+      await onChanged();
+    } catch (err) {
+      onError(err.message);
+      setBusy(false);
+      setArmed(false);
+    }
+  }
+
+  if (!armed) {
+    return (
+      <Button variant="danger" size="sm" className="shrink-0" onClick={() => setArmed(true)}>
+        Delete topic
+      </Button>
+    );
+  }
+
+  return (
+    <div className="shrink-0 rounded-lg border border-rose-200 bg-rose-50/60 p-3">
+      <p className="max-w-xs text-xs leading-relaxed text-rose-900">
+        Delete <strong>{topic.title}</strong>?
+        {losses.length > 0 ? ` This also removes ${losses.join(', ')}.` : ' It is empty.'}
+        {' This cannot be undone.'}
+      </p>
+      <div className="mt-2 flex gap-2">
+        <Button variant="danger" size="sm" disabled={busy} onClick={remove}>
+          {busy ? 'Deleting…' : 'Yes, delete it'}
+        </Button>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={() => setArmed(false)}>
+          Keep it
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
   const { user } = useAuth();
   // A topic has three separate jobs — write it, test it, share it. Stacking all
@@ -684,10 +764,17 @@ function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
   return (
     <div className="space-y-6">
       <Card>
-        <h2 className="text-lg font-semibold text-slate-900">{topic.title}</h2>
-        {topic.description && (
-          <p className="mt-2 text-sm leading-relaxed text-slate-600">{topic.description}</p>
-        )}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-slate-900">{topic.title}</h2>
+            {topic.description && (
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">{topic.description}</p>
+            )}
+          </div>
+
+          {leads && <DeleteTopic topic={topic} onChanged={onChanged} onError={onError} />}
+        </div>
+
         <div className="mt-4 border-t border-slate-100 pt-4">
           <TopicDuty
             course={course}
@@ -983,8 +1070,15 @@ function AllotmentSection({ topic, candidates, onChanged, onError }) {
                           className="shrink-0 rounded border-slate-300"
                         />
                         <span className="min-w-0">
-                          <span className="block truncate text-sm text-slate-800">
-                            {candidate.fullName}
+                          <span className="flex items-center gap-2">
+                            <span className="truncate text-sm text-slate-800">
+                              {candidate.fullName}
+                            </span>
+                            {/* A lead can be taught a course they do not run,
+                                so they appear here — but handing course work to
+                                someone who elsewhere marks it is worth seeing
+                                before you tick the box, not after. */}
+                            {candidate.role === 'lead' && <Badge tone="indigo">Course lead</Badge>}
                           </span>
                           <span className="block truncate text-xs text-slate-500">
                             {candidate.email}

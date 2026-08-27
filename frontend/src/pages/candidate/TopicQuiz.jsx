@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Alert, Badge, Button, Card, Empty, toneForScore } from '../../components/ui';
-import AttemptReview from './AttemptReview';
+import AttemptReview from '../../components/AttemptReview';
 
 export default function TopicQuiz({ topicId, onScored }) {
   const [state, setState] = useState(null);

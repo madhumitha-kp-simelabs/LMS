@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Badge, Button, Card, Cell, Empty, Input, Row, Table } from '../../components/ui';
+import { Alert, Badge, Button, Card, Empty, Input, Select, Textarea } from '../../components/ui';
+import { groupByCategory, toneForCategory, useCollapsedCategories } from '../../lib/categories';
+import CategoryHeading from '../../components/CategoryHeading';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -14,14 +16,18 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
  */
 export default function AdminCourses() {
   const [courses, setCourses] = useState(null);
+  const [categories, setCategories] = useState([]);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(
     () =>
-      api('/courses')
-        .then(({ courses }) => setCourses(courses))
+      Promise.all([api('/courses'), api('/categories')])
+        .then(([{ courses }, { categories }]) => {
+          setCourses(courses);
+          setCategories(categories);
+        })
         .catch((err) => setError(err.message)),
     [],
   );
@@ -52,21 +58,41 @@ export default function AdminCourses() {
     }
   }
 
-  const create = ({ code, title }) =>
+  const create = ({ code, title, categoryId }) =>
     run(
-      () => api('/admin/courses', { method: 'POST', body: { code, title } }),
+      () =>
+        api('/admin/courses', {
+          method: 'POST',
+          body: { code, title, categoryId: categoryId || null },
+        }),
       `${code} added. Allot it to a lead when you are ready.`,
     );
 
+  const addCategory = (name) =>
+    run(() => api('/categories', { method: 'POST', body: { name } }), `"${name}" added.`);
+
+  const renameCategory = (category, name) =>
+    run(
+      () => api(`/categories/${category.id}`, { method: 'PATCH', body: { name } }),
+      `"${category.name}" is now "${name}".`,
+    );
+
+  /** The courses inside survive as uncategorised, so say how many moved. */
+  const removeCategory = (category) =>
+    run(async () => {
+      const { unfiled } = await api(`/categories/${category.id}`, { method: 'DELETE' });
+      return unfiled;
+    }, `"${category.name}" removed.${category.courses > 0 ? ` ${plural(category.courses, 'course')} moved to Uncategorised.` : ''}`);
+
   /**
-   * Renaming or re-coding a course. Only an admin may change a code — it
-   * identifies the course to candidates and is quoted outside the system — and
-   * the API enforces that; here it is simply the same form.
+   * Editing a course record: code, title, description, duration. Only an admin
+   * may change a code — it identifies the course to candidates and is quoted
+   * outside the system — and the API enforces that; here it is one form.
    */
-  const rename = (course, fields) =>
+  const saveCourse = (course, fields) =>
     run(
       () => api(`/courses/${course.id}`, { method: 'PATCH', body: fields }),
-      `${fields.code ?? course.code} saved.`,
+      `${fields.code ?? course.code} updated.`,
     );
 
   if (error) {
@@ -91,7 +117,22 @@ export default function AdminCourses() {
       <div className="mt-8 space-y-6">
         {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
 
-        <NewCourseForm busy={busy} onCreate={create} />
+        {/* Side by side: adding a course and filing it under something are the
+            same job, and the form was stretching a title box across a whole
+            wide screen to be alone on its row. `items-start` so each keeps its
+            own height — Categories grows tall when Manage is open, and pinning
+            the form to match would leave it half empty. */}
+        <div className="grid gap-6 items-start lg:grid-cols-[3fr_2fr]">
+          <NewCourseForm busy={busy} categories={categories} onCreate={create} />
+
+          <CategoryManager
+            categories={categories}
+            busy={busy}
+            onAdd={addCategory}
+            onRename={renameCategory}
+            onRemove={removeCategory}
+          />
+        </div>
 
         <section>
           <h2 className="text-lg font-semibold text-slate-900">All courses</h2>
@@ -108,7 +149,12 @@ export default function AdminCourses() {
           </p>
 
           <div className="mt-4">
-            <CourseTable courses={courses} busy={busy} onRename={rename} />
+            <CourseCatalogue
+              courses={courses}
+              categories={categories}
+              busy={busy}
+              onSave={saveCourse}
+            />
           </div>
         </section>
       </div>
@@ -126,134 +172,429 @@ const Heading = () => (
   </div>
 );
 
-function NewCourseForm({ busy, onCreate }) {
-  const [form, setForm] = useState({ code: '', title: '' });
+function NewCourseForm({ busy, categories, onCreate }) {
+  const [form, setForm] = useState({ code: '', title: '', categoryId: '' });
 
   async function handleSubmit(event) {
     event.preventDefault();
     const added = await onCreate(form);
-    if (added) setForm({ code: '', title: '' });
+    // The category survives the reset: adding three Frontend courses in a row
+    // should not mean picking Frontend three times.
+    if (added) setForm({ code: '', title: '', categoryId: form.categoryId });
   }
 
   return (
     <Card accent="indigo">
       <h2 className="text-lg font-semibold text-slate-900">Add a course</h2>
 
-      <form onSubmit={handleSubmit} className="mt-4 grid gap-4 sm:grid-cols-[180px_1fr_auto] sm:items-end">
-        <Input
-          label="Course code"
-          placeholder="PM-103"
-          required
-          value={form.code}
-          onChange={(event) => setForm({ ...form, code: event.target.value })}
-        />
-        <Input
-          label="Title"
-          placeholder="Advanced Project Management"
-          required
-          value={form.title}
-          onChange={(event) => setForm({ ...form, title: event.target.value })}
-        />
-        <Button type="submit" disabled={busy}>
-          {busy ? 'Adding…' : 'Add course'}
-        </Button>
+      <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        <div className="grid gap-4 sm:grid-cols-[150px_1fr]">
+          <Input
+            label="Course code"
+            placeholder="PM-103"
+            required
+            value={form.code}
+            onChange={(event) => setForm({ ...form, code: event.target.value })}
+          />
+          <Input
+            label="Title"
+            placeholder="Advanced Project Management"
+            required
+            value={form.title}
+            onChange={(event) => setForm({ ...form, title: event.target.value })}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="min-w-[12rem] flex-1">
+            <Select
+              label="Category"
+              value={form.categoryId}
+              onChange={(event) => setForm({ ...form, categoryId: event.target.value })}
+            >
+              <option value="">Uncategorised</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <Button type="submit" disabled={busy}>
+            {busy ? 'Adding…' : 'Add course'}
+          </Button>
+        </div>
       </form>
 
       <p className="mt-3 text-xs leading-relaxed text-slate-500">
-        Codes are unique and shown to candidates — letters, numbers and hyphens, and you can correct
-        one later with Rename. The course starts as a draft, hidden from candidates until published.
+        Codes are unique and shown to candidates — letters, numbers and hyphens. Everything here can
+        be corrected later with Edit. The course starts as a draft, hidden until published.
       </p>
     </Card>
   );
 }
 
-const COLUMNS = [
-  { label: 'Course' },
-  { label: 'Lead' },
-  { label: 'Topics', align: 'right' },
-  { label: 'Candidates', align: 'right' },
-  { label: 'Status' },
-  { label: '', align: 'right' },
-];
-
-function CourseTable({ courses, busy, onRename }) {
-  // One row at a time: two half-finished renames on screen is a way to save the
-  // wrong one.
+/**
+ * Adding, renaming and removing the categories courses are filed under.
+ *
+ * It lives on the catalogue rather than getting a nav item of its own: nobody
+ * sets out to "manage categories", they notice a missing one while filing a
+ * course, and the fix should be on the screen where they noticed.
+ */
+function CategoryManager({ categories, busy, onAdd, onRename, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
   const [editingId, setEditingId] = useState(null);
 
-  if (courses.length === 0) return <Empty>No courses yet. Add the first one above.</Empty>;
+  async function add(event) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    const added = await onAdd(name.trim());
+    if (added) setName('');
+  }
 
   return (
-    <Table headers={COLUMNS}>
-      {courses.map((course) =>
-        course.id === editingId ? (
-          <CourseEditRow
-            key={course.id}
-            course={course}
-            busy={busy}
-            onCancel={() => setEditingId(null)}
-            onSave={async (fields) => {
-              const saved = await onRename(course, fields);
-              if (saved) setEditingId(null);
-            }}
-          />
-        ) : (
-          <Row key={course.id}>
-            <Cell>
-              <Link to={`/trainer/courses/${course.id}`} className="group">
-                <span className="block text-xs font-semibold tracking-wide text-indigo-600">
-                  {course.code}
-                </span>
-                <span className="font-medium text-slate-900 group-hover:text-indigo-700">
-                  {course.title}
-                </span>
-              </Link>
-            </Cell>
-            <Cell>
-              {course.owner ? (
-                <span className="text-slate-700">{course.owner.fullName}</span>
-              ) : (
-                <Badge tone="amber">No lead yet</Badge>
-              )}
-            </Cell>
-            <Cell align="right" className="text-slate-700">
-              {course._count.topics}
-            </Cell>
-            <Cell align="right" className="text-slate-700">
-              {course._count.enrollments}
-            </Cell>
-            <Cell>
-              <Badge tone={course.isPublished ? 'green' : 'amber'}>
-                {course.isPublished ? 'Published' : 'Draft'}
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Categories</h2>
+          <p className="mt-0.5 text-sm text-slate-500">
+            What a course is about. Every course list groups by these.
+          </p>
+        </div>
+
+        <Button variant="secondary" size="sm" onClick={() => setOpen((was) => !was)}>
+          {open ? 'Done' : 'Manage'}
+        </Button>
+      </div>
+
+      {/* Closed, it is a row of chips — enough to see what exists without the
+          machinery for changing it sitting on screen all day. */}
+      {!open ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {categories.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              None yet. Add Frontend, Backend, UI/UX and the rest with Manage.
+            </p>
+          ) : (
+            categories.map((category) => (
+              <Badge key={category.id} tone={toneForCategory(category)}>
+                {category.name} · {category.courses}
               </Badge>
-            </Cell>
-            <Cell align="right">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={busy}
-                onClick={() => setEditingId(course.id)}
-              >
-                Rename
-              </Button>
-            </Cell>
-          </Row>
-        ),
+            ))
+          )}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-4">
+          <ul className="divide-y divide-slate-100 border-y border-slate-100">
+            {categories.map((category) =>
+              category.id === editingId ? (
+                <RenameRow
+                  key={category.id}
+                  category={category}
+                  busy={busy}
+                  onCancel={() => setEditingId(null)}
+                  onSave={async (next) => {
+                    const saved = await onRename(category, next);
+                    if (saved) setEditingId(null);
+                  }}
+                />
+              ) : (
+                <li
+                  key={category.id}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2.5"
+                >
+                  <span className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-medium text-slate-900">{category.name}</span>
+                    <span className="text-xs text-slate-500">
+                      {category.courses === 0 ? 'empty' : plural(category.courses, 'course')}
+                    </span>
+                  </span>
+
+                  <span className="flex gap-3">
+                    <button
+                      disabled={busy}
+                      onClick={() => setEditingId(category.id)}
+                      className="text-xs text-indigo-600 underline hover:text-indigo-700 disabled:opacity-50"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() => onRemove(category)}
+                      // The courses survive, so this needs no confirmation
+                      // dialog — the notice afterwards says where they went and
+                      // filing them again is a dropdown.
+                      title={
+                        category.courses > 0
+                          ? `${plural(category.courses, 'course')} would move to Uncategorised`
+                          : undefined
+                      }
+                      className="text-xs text-rose-600 underline hover:text-rose-700 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </span>
+                </li>
+              ),
+            )}
+          </ul>
+
+          <form onSubmit={add} className="flex flex-wrap items-end gap-3">
+            <div className="w-64">
+              <Input
+                label="New category"
+                placeholder="Quality Assurance"
+                maxLength={60}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            <Button type="submit" size="sm" disabled={busy || !name.trim()}>
+              {busy ? 'Adding…' : 'Add category'}
+            </Button>
+          </form>
+
+          <p className="text-xs leading-relaxed text-slate-500">
+            Removing a category never removes its courses — they come back as Uncategorised and can
+            be filed again from Edit.
+          </p>
+        </div>
       )}
-    </Table>
+    </Card>
+  );
+}
+
+/** Renaming in place. The slug follows the name, so typos do not outlive them. */
+function RenameRow({ category, busy, onSave, onCancel }) {
+  const [name, setName] = useState(category.name);
+  const changed = name.trim() && name.trim() !== category.name;
+
+  return (
+    <li className="py-2.5">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (changed) onSave(name.trim());
+        }}
+        className="flex flex-wrap items-end gap-3"
+      >
+        <div className="w-64">
+          <Input
+            label="Name"
+            autoFocus
+            maxLength={60}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={busy || !changed}>
+          Save
+        </Button>
+        <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onCancel}>
+          Cancel
+        </Button>
+      </form>
+    </li>
   );
 }
 
 /**
- * The row turned into a form. It spans the whole width rather than editing in
- * place, so the title has room to be read and corrected.
+ * One grid, shared by the column labels and every course row, so the columns
+ * line up down the whole page even though the rows live in separate cards.
+ * That is the trick that lets the catalogue be grouped and still be a table.
  */
-function CourseEditRow({ course, busy, onSave, onCancel }) {
-  const [form, setForm] = useState({ code: course.code, title: course.title });
+const GRID =
+  'grid grid-cols-[minmax(0,1fr)_150px_64px_92px_104px_72px] items-center gap-x-4';
+
+/**
+ * The catalogue, grouped by what each course is about.
+ *
+ * This was one table with grey banded heading rows, and it failed in a way that
+ * only shows up once there are more categories than courses: three empty
+ * headings stacked on top of each other, each a full-height band promising
+ * content that never came. Empty categories are now a single quiet line at the
+ * bottom, and each category that does hold something gets its own card.
+ */
+function CourseCatalogue({ courses, categories, busy, onSave }) {
+  // One row at a time: two half-finished edits on screen is a way to save the
+  // wrong one.
+  const [editingId, setEditingId] = useState(null);
+  const folds = useCollapsedCategories('lt.catalogue.collapsed');
+
+  if (courses.length === 0) return <Empty>No courses yet. Add the first one above.</Empty>;
+
+  const groups = groupByCategory(courses, { all: categories });
+  const unused = categories.filter((category) => category.courses === 0);
+
+  return (
+    <div className="space-y-7">
+<div className="flex items-center justify-between gap-4">
+        {/* Labelled once, above everything, rather than repeated per card. The
+            labels head nothing once every section is folded, so they go too. */}
+        <div
+          className={`${GRID} flex-1 px-5 text-[11px] font-semibold uppercase tracking-wide text-slate-400 ${
+            groups.some((group) => folds.isOpen(group.category)) ? '' : 'invisible'
+          }`}
+        >
+          <span>Course</span>
+          <span>Lead</span>
+          <span className="text-right">Topics</span>
+          <span className="text-right">Candidates</span>
+          <span>Status</span>
+          <span />
+        </div>
+
+        {/* Only offered when there is more than one section to act on. */}
+        {groups.length > 1 && (
+          <button
+            onClick={() =>
+              folds.allOpen ? folds.closeAll(groups.map((group) => group.category)) : folds.openAll()
+            }
+            className="shrink-0 text-xs text-indigo-600 underline transition hover:text-indigo-700"
+          >
+            {folds.allOpen ? 'Collapse all' : 'Expand all'}
+          </button>
+        )}
+      </div>
+
+      {groups.map((group) => (
+        <section key={group.category.id ?? 'none'}>
+          <CategoryHeading
+            category={group.category}
+            count={group.courses.length}
+            open={folds.isOpen(group.category)}
+            onToggle={() => folds.toggle(group.category)}
+          />
+
+          {folds.isOpen(group.category) && (
+          <Card flush className="mt-2.5 overflow-hidden">
+            <ul className="divide-y divide-slate-100">
+              {group.courses.map((course) => (
+                <li key={course.id}>
+                  {course.id === editingId ? (
+                    <CourseEditForm
+                      course={course}
+                      categories={categories}
+                      busy={busy}
+                      onCancel={() => setEditingId(null)}
+                      onSave={async (fields) => {
+                        const saved = await onSave(course, fields);
+                        if (saved) setEditingId(null);
+                      }}
+                    />
+                  ) : (
+                    <CourseRow
+                      course={course}
+                      busy={busy}
+                      onEdit={() => setEditingId(course.id)}
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Card>
+          )}
+        </section>
+      ))}
+
+      {/* The categories nobody has filed anything under. A sentence, because
+          that is all the information is worth — the Categories card above is
+          where you act on them. */}
+      {unused.length > 0 && (
+        <p className="text-xs text-slate-500">
+          Nothing filed under{' '}
+          <span className="font-medium text-slate-600">
+            {unused.map((category) => category.name).join(' · ')}
+          </span>{' '}
+          yet.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CourseRow({ course, busy, onEdit }) {
+  return (
+    <div className={`${GRID} px-5 py-3.5 transition hover:bg-slate-50/70`}>
+      <Link to={`/trainer/courses/${course.id}`} className="group min-w-0">
+        <span className="block text-xs font-semibold tracking-wide text-indigo-600">
+          {course.code}
+        </span>
+        <span className="block truncate font-medium text-slate-900 group-hover:text-indigo-700">
+          {course.title}
+        </span>
+      </Link>
+
+      <span className="truncate text-sm">
+        {course.owner ? (
+          <span className="text-slate-700">{course.owner.fullName}</span>
+        ) : (
+          <Badge tone="amber">No lead</Badge>
+        )}
+      </span>
+
+      {/* Tabular figures, so the counts form a column rather than a ragged
+          edge that has to be read one row at a time. */}
+      <span className="text-right text-sm tabular-nums text-slate-700">
+        {course._count.topics}
+      </span>
+      <span className="text-right text-sm tabular-nums text-slate-700">
+        {course._count.enrollments}
+      </span>
+
+      <span>
+        <Badge tone={course.isPublished ? 'green' : 'amber'}>
+          {course.isPublished ? 'Published' : 'Draft'}
+        </Badge>
+      </span>
+
+      <span className="text-right">
+        <Button variant="secondary" size="sm" disabled={busy} onClick={onEdit}>
+          Edit
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The row turned into a form. It takes the full width of the card rather than
+ * editing in place, so the title has room to be read and corrected.
+ */
+function CourseEditForm({ course, categories, busy, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    code: course.code,
+    title: course.title,
+    description: course.description ?? '',
+    // Kept as a string because the input hands one back; an empty box means
+    // "no duration set" rather than zero weeks.
+    durationWeeks: course.durationWeeks == null ? '' : String(course.durationWeeks),
+    // '' rather than null, because that is what an unselected <select> holds.
+    categoryId: course.category?.id ?? '',
+  });
 
   const code = form.code.trim().toUpperCase();
   const title = form.title.trim();
-  const changed = code !== course.code || title !== course.title;
+  const description = form.description.trim();
+  const durationWeeks = form.durationWeeks === '' ? null : Number(form.durationWeeks);
+  const categoryId = form.categoryId || null;
+
+  const was = {
+    code: course.code,
+    title: course.title,
+    description: course.description ?? '',
+    durationWeeks: course.durationWeeks ?? null,
+    categoryId: course.category?.id ?? null,
+  };
+
+  const changed =
+    code !== was.code ||
+    title !== was.title ||
+    description !== was.description ||
+    durationWeeks !== was.durationWeeks ||
+    categoryId !== was.categoryId;
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -262,50 +603,91 @@ function CourseEditRow({ course, busy, onSave, onCancel }) {
     // Send only what moved, so an untouched code is never re-checked for
     // clashes against itself.
     onSave({
-      ...(code !== course.code && { code }),
-      ...(title !== course.title && { title }),
+      ...(code !== was.code && { code }),
+      ...(title !== was.title && { title }),
+      // null, not undefined — JSON drops undefined, so an emptied box would
+      // never reach the API and the description could not be cleared.
+      ...(description !== was.description && { description: description || null }),
+      ...(durationWeeks !== was.durationWeeks && { durationWeeks }),
+      // Same reason: null is how a course leaves its category.
+      ...(categoryId !== was.categoryId && { categoryId }),
     });
   }
 
   return (
-    <tr className="border-b border-slate-100 bg-indigo-50/40 last:border-0">
-      <td colSpan={COLUMNS.length} className="px-5 py-4">
-        <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
-          <div className="w-40">
-            <Input
-              label="Course code"
-              autoFocus
-              required
-              maxLength={20}
-              className="uppercase"
-              value={form.code}
-              onChange={(event) => setForm({ ...form, code: event.target.value })}
-            />
-          </div>
+    <form onSubmit={handleSubmit} className="space-y-3 bg-indigo-50/40 px-5 py-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-40">
+          <Input
+            label="Course code"
+            autoFocus
+            required
+            maxLength={20}
+            className="uppercase"
+            value={form.code}
+            onChange={(event) => setForm({ ...form, code: event.target.value })}
+          />
+        </div>
 
-          <div className="min-w-[18rem] flex-1">
-            <Input
-              label="Title"
-              required
-              maxLength={200}
-              value={form.title}
-              onChange={(event) => setForm({ ...form, title: event.target.value })}
-            />
-          </div>
+        <div className="min-w-[18rem] flex-1">
+          <Input
+            label="Title"
+            required
+            maxLength={200}
+            value={form.title}
+            onChange={(event) => setForm({ ...form, title: event.target.value })}
+          />
+        </div>
 
-          <Button type="submit" size="sm" disabled={busy || !changed}>
-            {busy ? 'Saving…' : 'Save'}
-          </Button>
-          <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onCancel}>
-            Cancel
-          </Button>
+        <div className="w-52">
+          <Select
+            label="Category"
+            value={form.categoryId}
+            onChange={(event) => setForm({ ...form, categoryId: event.target.value })}
+          >
+            <option value="">Uncategorised</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </Select>
+        </div>
 
-          <p className="w-full text-xs text-slate-500">
-            Candidates see the code, and it is quoted outside the system — change it only when it
-            is genuinely wrong. Letters, numbers and hyphens; it must stay unique.
-          </p>
-        </form>
-      </td>
-    </tr>
+        <div className="w-36">
+          <Input
+            label="Duration (weeks)"
+            type="number"
+            min={1}
+            max={104}
+            placeholder="none"
+            value={form.durationWeeks}
+            onChange={(event) => setForm({ ...form, durationWeeks: event.target.value })}
+          />
+        </div>
+      </div>
+
+      <Textarea
+        label="Description"
+        rows={2}
+        maxLength={2000}
+        placeholder="What the course covers, in a sentence or two. Candidates see this when browsing."
+        value={form.description}
+        onChange={(event) => setForm({ ...form, description: event.target.value })}
+      />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" size="sm" disabled={busy || !changed}>
+          {busy ? 'Saving…' : 'Save changes'}
+        </Button>
+        <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onCancel}>
+          Cancel
+        </Button>
+        <p className="text-xs text-slate-500">
+          Candidates see the code and description. A code is quoted outside the system, so change it
+          only when it is genuinely wrong — letters, numbers and hyphens, and unique.
+        </p>
+      </div>
+    </form>
   );
 }

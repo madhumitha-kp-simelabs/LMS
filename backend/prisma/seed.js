@@ -68,6 +68,26 @@ const PM_TOPICS = [
 
 const SEED_PASSWORD = process.env.SEED_PASSWORD ?? 'Password123!';
 
+/**
+ * The categories courses are filed under. Matches the set the
+ * 20260825053000_course_categories migration inserts, so a database built by
+ * seeding and one built by migrating end up looking the same.
+ */
+const CATEGORIES = ['Frontend', 'Backend', 'UI/UX Design', 'Project Management'];
+
+/**
+ * Candidate teams — what someone is being trained as. Matches the set the
+ * 20260827061500_candidate_teams migration inserts, so a seeded database and a
+ * migrated one end up the same.
+ */
+const TEAMS = ['MERN', 'Python', 'Project Management'];
+
+const slugify = (name) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
 async function main() {
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, 12);
 
@@ -87,6 +107,31 @@ async function main() {
   const trainer = users['trainer@learningtracker.local'];
   const arun = users['candidate@learningtracker.local'];
 
+  // Categories come first: the course below is filed under one, and every
+  // course list groups by them. Upserted on name so re-running the seed against
+  // a database that already has them is a no-op rather than a unique violation.
+  console.log('\nTeams');
+  for (const [index, name] of TEAMS.entries()) {
+    const team = await prisma.team.upsert({
+      where: { name },
+      update: {},
+      create: { name, slug: slugify(name), position: index + 1 },
+    });
+    console.log(`  ${team.name}`);
+  }
+
+  console.log('\nCategories');
+  const categories = {};
+  for (const [index, name] of CATEGORIES.entries()) {
+    const category = await prisma.category.upsert({
+      where: { name },
+      update: {},
+      create: { name, slug: slugify(name), position: index + 1 },
+    });
+    categories[name] = category;
+    console.log(`  ${category.name}`);
+  }
+
   console.log('\nCourse');
   const course = await prisma.course.upsert({
     where: { code: 'PM-101' },
@@ -98,6 +143,7 @@ async function main() {
         'A five-week introduction to planning, scheduling and controlling projects, ending with risk management.',
       isPublished: true,
       ownerId: trainer.id,
+      categoryId: categories['Project Management'].id,
     },
   });
   console.log(`  ${course.code} — ${course.title} (owner: ${trainer.fullName})`);

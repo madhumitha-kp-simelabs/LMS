@@ -29,27 +29,46 @@ datasource db {
 
 enum Role {
   candidate // employee attending courses
-  trainer   // writes the topics a lead hands them; may never publish
-  lead      // runs courses: publishes them and divides the work among trainers
-  admin     // super admin; sees every course and everyone on it
+  trainer // writes the topics a lead hands them; may never publish
+  lead // runs courses: publishes them and divides the work among trainers
+  admin // super admin; sees every course and everyone on it
 }
 
 enum MaterialType {
   rich_text // authored in-app, stored in Material.body
-  pdf       // uploaded PDF, viewable inline; stored at Material.fileUrl
-  slides    // uploaded pptx/odp, download-only; stored at Material.fileUrl
-  link      // external URL, stored at Material.fileUrl
+  pdf // uploaded PDF, viewable inline; stored at Material.fileUrl
+  slides // uploaded pptx/odp, download-only; stored at Material.fileUrl
+  link // external URL, stored at Material.fileUrl
 }
 
 enum QuestionType {
   mcq_single // exactly one correct option
-  mcq_multi  // two or more correct options
-  written    // not built yet; kept here so adding it is an insert, not a migration
+  mcq_multi // two or more correct options
+  written // not built yet; kept here so adding it is an insert, not a migration
 }
 
 enum EnrollmentStatus {
   pending // candidate asked to join; awaiting a trainer's decision
-  active  // approved, or created directly by a trainer allotting a topic
+  active // approved, or created directly by a trainer allotting a topic
+}
+
+/**
+ * A one-to-one request's life: asked for, given a time, or turned down.
+ * There is no "finished" — a session that has happened is simply one whose
+ * time is in the past, and asking the lead to close it afterwards would be
+ * asking for admin nobody would do.
+ */
+/** An extension request's life. Mirrors SessionStatus; different decision. */
+enum ExtensionStatus {
+  requested
+  approved
+  declined
+}
+
+enum SessionStatus {
+  requested // candidate has asked; waiting on the lead
+  scheduled // lead has given it a time
+  declined  // lead said no, with a reason
 }
 
 enum AttemptStatus {
@@ -59,9 +78,9 @@ enum AttemptStatus {
 }
 
 enum AnswerStatus {
-  submitted      // auto-scored MCQ, final
+  submitted // auto-scored MCQ, final
   pending_review // written answer awaiting a trainer
-  reviewed       // written answer graded by a trainer
+  reviewed // written answer graded by a trainer
 }
 
 // ---------------------------------------------------------------- people
@@ -78,51 +97,132 @@ model User {
 
   // Courses this user leads. Named "owned" for history; `lead` is the word used
   // everywhere the concept is talked about.
-  coursesOwned     Course[]          @relation("CourseOwner")
-  courseTeams      CourseTrainer[]   @relation("TrainerOnCourse")
-  materialDuties   Topic[]           @relation("TopicMaterialDuty")
-  quizDuties       Topic[]           @relation("TopicQuizDuty")
+  coursesOwned     Course[]           @relation("CourseOwner")
+  courseTeams      CourseTrainer[]    @relation("TrainerOnCourse")
+  materialDuties   Topic[]            @relation("TopicMaterialDuty")
+  quizDuties       Topic[]            @relation("TopicQuizDuty")
   enrollments      Enrollment[]
-  topicAccess      TopicAssignment[] @relation("AssignedCandidate")
-  topicsGranted    TopicAssignment[] @relation("GrantedByTrainer")
+  topicAccess      TopicAssignment[]  @relation("AssignedCandidate")
+  topicsGranted    TopicAssignment[]  @relation("GrantedByTrainer")
+  // The discipline this person is being trained in — MERN, Python, Project
+  // Management. Candidates only in practice, and optional: an account exists
+  // before anyone has decided where it belongs.
+  //
+  // NOT the same thing as Course.team, which is a course's trainers. That one
+  // is about who teaches a course; this one is about what a candidate is being
+  // trained as, and the two never meet.
+  teamId String?
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  projectWork      ProjectAllotment[] @relation("ProjectCandidate")
+  projectsAllotted ProjectAllotment[] @relation("ProjectAllottedBy")
+  projectsMarked   ProjectAllotment[] @relation("ProjectEvaluatedBy")
+  extensionsAsked   ExtensionRequest[] @relation("ExtensionCandidate")
+  extensionsDecided ExtensionRequest[] @relation("ExtensionDecidedBy")
+  sessionsAsked    SessionRequest[]   @relation("SessionCandidate")
+  sessionsDecided  SessionRequest[]   @relation("SessionDecidedBy")
   attempts         Attempt[]
   feedback         CourseFeedback[]
 
   @@index([role])
+  @@index([teamId])
   @@map("users")
 }
 
 // ---------------------------------------------------------------- content
 
 model Course {
-  id          String   @id @default(uuid())
-  code        String   @unique // e.g. "PM-101"
-  title       String
-  description String?
+  id            String   @id @default(uuid())
+  code          String   @unique // e.g. "PM-101"
+  title         String
+  description   String?
   // How long the course is expected to take, in weeks. Optional — used to show
   // candidates what they are committing to, and to flag those running over.
   durationWeeks Int?
-  isPublished   Boolean @default(false)
+  isPublished   Boolean  @default(false)
   // Null until an admin allots the course to a trainer. Admins create courses
   // as a code and a title; who runs it is a separate decision, made later on
   // the allotment screen.
-  ownerId     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  ownerId       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // What the course is about. Optional, and stays optional: a course is created
+  // as a code and a title before anyone has decided where it belongs, and an
+  // unfiled course must still be a usable course.
+  categoryId String?
 
   owner       User?            @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  category    Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   team        CourseTrainer[]
   topics      Topic[]
+  projects    Project[]
   enrollments Enrollment[]
   feedback    CourseFeedback[]
+  sessions    SessionRequest[]
+  extensions  ExtensionRequest[]
 
   @@index([ownerId])
+  @@index([categoryId])
   @@map("courses")
 }
 
 /**
- * A trainer on a course's team, put there by an admin.
+ * What a course is about: Frontend, Backend, UI/UX, Project Management.
+ * A table rather than an enum because this list belongs to the organisation,
+ * not to the software — a new discipline should be an administrator typing a
+ * name, not a migration and a deploy.
+ * Deleting one is deliberately survivable: the courses in it fall back to
+ * uncategorised (onDelete: SetNull) rather than going with it. Getting the
+ * grouping wrong should never be a way to lose a course.
+ */
+/**
+ * A candidate's team: the discipline they are being trained in — MERN, Python,
+ * Project Management.
  *
+ * Shaped exactly like Category, and for the same reason: the list belongs to
+ * the organisation rather than the software, so adding one is an administrator
+ * typing a name. Category groups courses by subject; Team groups people by
+ * what they are being trained as. A candidate on the MERN team may well sit a
+ * Project Management course.
+ *
+ * Removing a team leaves its members in place, unassigned (onDelete: SetNull) —
+ * reorganising must never be a way to lose people.
+ */
+model Team {
+  id   String @id @default(uuid())
+  name String @unique
+  slug String @unique
+  // Display order wherever people are grouped, so the grouping reads the same
+  // everywhere instead of falling out of an alphabetical accident.
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members User[]
+
+  @@map("teams")
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  // Stable identifier for a category whose name may be edited later.
+  slug      String   @unique
+  // Order across every grouped list. Explicit, so the grouping reads the same
+  // on the catalogue, the browse page and a lead's own list, instead of falling
+  // out of whatever alphabetical accident the names produce.
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  courses Course[]
+
+  @@map("categories")
+}
+
+/**
+ * A trainer on a course's team, put there by an admin.
  * The team is who the lead may hand topics to. Being on it grants no authority
  * over the course itself — a team trainer builds what they are given and cannot
  * publish it. The lead is NOT a row here; they are Course.ownerId.
@@ -142,21 +242,21 @@ model CourseTrainer {
 }
 
 model Topic {
-  id          String   @id @default(uuid())
-  courseId    String
-  position    Int // display order in the left-hand sidebar
-  title       String
-  description String?
+  id                String   @id @default(uuid())
+  courseId          String
+  position          Int // display order in the left-hand sidebar
+  title             String
+  description       String?
   // Only the course's lead may set this. A team trainer writes the material and
   // the quiz; releasing it to candidates is the lead's decision.
-  isPublished Boolean  @default(false)
+  isPublished       Boolean  @default(false)
   // A topic is two pieces of work, and the lead may hand them to different
   // people: one writes the reading material, another sets the quiz. Either is
   // null while that half has not been handed out.
   materialTrainerId String?
   quizTrainerId     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   course          Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
   materialTrainer User?             @relation("TopicMaterialDuty", fields: [materialTrainerId], references: [id], onDelete: SetNull)
@@ -172,22 +272,94 @@ model Topic {
   @@map("topics")
 }
 
+/**
+ * A piece of practical work set on a course — "draft a project charter" — as
+ * opposed to a topic, which is something to read and be tested on.
+ * The course's lead writes these. Handing them to candidates is the admin's
+ * decision, which is why there is no duty column here: a project is not written
+ * by a trainer, it is set once and given out.
+ */
+model Project {
+  id        String    @id @default(uuid())
+  courseId  String
+  position  Int // display order within the course
+  title     String
+  brief     String?
+  // Optional deadline, shown to the candidate and used to flag overdue work.
+  dueAt     DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  course     Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  allotments ProjectAllotment[]
+
+  @@unique([courseId, position])
+  @@index([courseId])
+  @@map("projects")
+}
+
+/**
+ * One candidate's copy of a project. The same project goes to as many people as
+ * the admin likes; each of them finishes it in their own time, so the done mark
+ * lives here rather than on the project.
+ */
+model ProjectAllotment {
+  id          String    @id @default(uuid())
+  projectId   String
+  userId      String
+  allottedBy  String
+  allottedAt  DateTime  @default(now())
+  // Set when the candidate marks it finished, cleared if they undo that.
+  completedAt DateTime?
+
+  // What they handed in. A link, a file, or both — a coding project is a repo,
+  // a written one is a document. Kept beside completedAt rather than replacing
+  // it: a project can be finished without producing an artefact to attach.
+  submissionUrl    String?
+  submissionNote   String?
+  fileUrl          String? // storage key, as Material.fileUrl
+  originalFilename String?
+  mimeType         String?
+  fileSizeBytes    BigInt?
+  submittedAt      DateTime?
+
+  // The lead's judgement of that work. Deliberately apart from completedAt:
+  // finishing is the candidate's claim about their own work, evaluating is the
+  // lead's answer to it, and the two happen days apart. Either half stands on
+  // its own — a score with no comment, or a comment with no score.
+  score       Int? // out of 100
+  feedback    String?
+  evaluatedBy String?
+  evaluatedAt DateTime?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation("ProjectCandidate", fields: [userId], references: [id], onDelete: Cascade)
+  admin     User    @relation("ProjectAllottedBy", fields: [allottedBy], references: [id], onDelete: Restrict)
+  // SetNull rather than Restrict: a lead can leave, and their marks outlive
+  // them even when the name behind them is gone.
+  evaluator User?   @relation("ProjectEvaluatedBy", fields: [evaluatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_allotments")
+}
+
 model Material {
-  id      String       @id @default(uuid())
-  topicId String
-  type    MaterialType
-  title   String
-  body    String? // rich_text only: HTML/JSON authored in-app
+  id               String       @id @default(uuid())
+  topicId          String
+  type             MaterialType
+  title            String
+  body             String? // rich_text only: HTML/JSON authored in-app
   // pdf / slides: object-storage key (bucket path), resolved to a signed URL
   // at read time. link: the external URL itself.
-  fileUrl String?
+  fileUrl          String?
   // File metadata — populated for uploaded pdf/slides, null otherwise.
   originalFilename String?
   mimeType         String?
   fileSizeBytes    BigInt?
   position         Int
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
@@ -203,7 +375,17 @@ model Quiz {
   topicId        String   @unique // one quiz per topic
   title          String
   maxAttempts    Int? // null = unlimited retakes
-  passPercentage Decimal  @default(0) @db.Decimal(5, 2)
+  // How many questions one sitting draws from the bank. Null serves every
+  // question there is, which is what every quiz written before this did and
+  // what a small quiz should go on doing.
+  //
+  // The questions themselves are the bank: a quiz with 50 questions and this
+  // set to 12 gives each candidate a different twelve, which is the half of
+  // anti-cheating that shuffling alone cannot provide.
+  questionsPerAttempt Int?
+  // The organisation's standard is 60%; a lead can move it per quiz. It used
+  // to default to 0, which quietly meant every candidate passed everything.
+  passPercentage Decimal  @default(60) @db.Decimal(5, 2)
   isPublished    Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -238,7 +420,7 @@ model Question {
 }
 
 model QuestionOption {
-  id         String @id @default(uuid())
+  id         String  @id @default(uuid())
   questionId String
   label      String
   isCorrect  Boolean @default(false)
@@ -255,17 +437,37 @@ model QuestionOption {
 // ---------------------------------------------------------------- access
 
 model Enrollment {
-  id     String           @id @default(uuid())
-  userId String
-  courseId String
+  id          String           @id @default(uuid())
+  userId      String
+  courseId    String
   // Defaults to active so a trainer allotting a topic enrolls outright; a
   // candidate subscribing to a course creates a pending row instead.
-  status     EnrollmentStatus @default(active)
-  enrolledAt DateTime         @default(now())
+  status      EnrollmentStatus @default(active)
+  enrolledAt  DateTime         @default(now())
   // Set the first time the candidate opens a topic in this course, and when
   // every quiz allotted to them has been attempted. Null until each happens.
   startedAt   DateTime?
   completedAt DateTime?
+
+  /**
+   * When this candidate is expected to finish.
+   *
+   * Stored rather than computed from startedAt + Course.durationWeeks, because
+   * it moves: an approved extension pushes it out, and a pause pushes it out by
+   * exactly the days lost. Recomputing it would throw both away.
+   *
+   * Null when the course has no duration set, which is a course with no
+   * deadline rather than one that is instantly overdue.
+   */
+  dueAt DateTime?
+
+  /**
+   * Set while the candidate has paused — assigned to an urgent project, say.
+   * Null means running. On resuming, the days between are added to both
+   * pausedDays and dueAt, so a pause costs the candidate nothing.
+   */
+  pausedAt   DateTime?
+  pausedDays Int       @default(0)
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
@@ -298,10 +500,20 @@ model TopicAssignment {
  * stays a current view rather than a thread of comments.
  */
 model CourseFeedback {
-  id        String   @id @default(uuid())
-  userId    String
-  courseId  String
-  rating    Int // 1-5
+  id       String @id @default(uuid())
+  userId   String
+  courseId String
+  // The overall verdict, and the two things it is usually made of. Split
+  // because "3 stars" tells a lead nothing they can fix: a course marked down
+  // for running too long needs a different change from one marked down for
+  // thin material, and one number cannot say which.
+  //
+  // The halves are nullable and the overall is not: feedback left before this
+  // split has only the overall, and asking those candidates to come back and
+  // fill in the rest is not worth losing what they already said.
+  rating         Int // 1-5, overall
+  contentRating  Int? // 1-5, the material itself
+  durationRating Int? // 1-5, whether the course was the right length
   comment   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -312,6 +524,89 @@ model CourseFeedback {
   @@unique([userId, courseId])
   @@index([courseId])
   @@map("course_feedback")
+}
+
+/**
+ * A candidate asking their course's lead for a one-to-one.
+ *
+ * Deliberately per course rather than per person: "I am stuck" is always stuck
+ * on something, and routing it through the course is what tells the system
+ * which lead is being asked. A candidate on three courses can have three open
+ * requests, one with each lead.
+ *
+ * Only one may be open at a time per course — enforced in the service rather
+ * than by a unique index, because resolved requests stay as a record and a
+ * partial index over an enum is more machinery than the rule deserves.
+ */
+/**
+ * A candidate asking for more time on a course.
+ *
+ * Approving one moves that candidate's Enrollment.dueAt and nobody else's —
+ * which is the whole point of the deadline living on the enrolment rather than
+ * being derived from the course.
+ *
+ * The days asked for are recorded separately from the days granted: a lead who
+ * gives two weeks against a request for four has said something, and losing the
+ * difference would make the record read as though the candidate got what they
+ * asked for.
+ */
+model ExtensionRequest {
+  id       String          @id @default(uuid())
+  courseId String
+  userId   String
+  status   ExtensionStatus @default(requested)
+  // How many extra days the candidate asked for, and why.
+  days   Int
+  reason String
+
+  // What the lead granted. `grantedDays` may differ from `days`, and is null
+  // on a decline.
+  grantedDays Int?
+  response    String?
+  decidedById String?
+  decidedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user      User   @relation("ExtensionCandidate", fields: [userId], references: [id], onDelete: Cascade)
+  decidedBy User?  @relation("ExtensionDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([courseId, status])
+  @@index([userId])
+  @@map("extension_requests")
+}
+
+model SessionRequest {
+  id       String        @id @default(uuid())
+  courseId String
+  userId   String
+  status   SessionStatus @default(requested)
+  // What the candidate wants to talk about. The whole value of the request:
+  // a lead who knows the subject can prepare rather than spend the session
+  // finding out why it was booked.
+  reason String
+
+  // Filled when the lead answers. `scheduledAt` is the agreed time;
+  // `response` carries the joining details, or the reason for saying no.
+  scheduledAt DateTime?
+  response    String?
+  decidedById String?
+  decidedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user      User   @relation("SessionCandidate", fields: [userId], references: [id], onDelete: Cascade)
+  // SetNull rather than Restrict: a lead can leave, and the record of what was
+  // arranged outlives them.
+  decidedBy User?  @relation("SessionDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([courseId, status])
+  @@index([userId])
+  @@map("session_requests")
 }
 
 // ---------------------------------------------------------------- submissions

@@ -78,14 +78,38 @@ router.get(
     const distribution = [1, 2, 3, 4, 5].map(
       (star) => entries.filter((e) => e.rating === star).length,
     );
-    const average =
-      entries.length === 0
-        ? null
-        : Math.round((entries.reduce((sum, e) => sum + e.rating, 0) / entries.length) * 10) / 10;
+
+    /**
+     * The mean of one dimension, over the people who rated it.
+     *
+     * Nulls are skipped rather than counted as zero — feedback left before the
+     * breakdown existed would otherwise drag every average down and make the
+     * course look worse the longer it has been running.
+     */
+    const mean = (pick) => {
+      const given = entries.map(pick).filter((value) => value != null);
+      if (given.length === 0) return null;
+      return {
+        average: Math.round((given.reduce((sum, v) => sum + v, 0) / given.length) * 10) / 10,
+        count: given.length,
+      };
+    };
 
     res.json({
       feedback: entries,
-      summary: { count: entries.length, average, distribution },
+      summary: {
+        count: entries.length,
+        average:
+          entries.length === 0
+            ? null
+            : Math.round((entries.reduce((sum, e) => sum + e.rating, 0) / entries.length) * 10) /
+              10,
+        distribution,
+        // What the overall is made of. Either can be null, meaning nobody who
+        // has rated this course has rated that part of it yet.
+        content: mean((e) => e.contentRating),
+        duration: mean((e) => e.durationRating),
+      },
     });
   }),
 );

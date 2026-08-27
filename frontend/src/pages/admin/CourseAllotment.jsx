@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Avatar, Badge, Button, Card, Empty, Select } from '../../components/ui';
 import { useAdminOverview } from './useAdminOverview';
+import { toneForCategory } from '../../lib/categories';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -251,7 +252,7 @@ function CourseCard({ course, leads, trainers, candidates, busyId, onAllot, onAd
   const busy = busyId === `team-${course.id}` || busyId === `allot-${course.id}`;
 
   return (
-    <Card accent={course.trainer ? 'indigo' : 'amber'} className="p-0">
+    <Card flush accent={course.trainer ? 'indigo' : 'amber'}>
       <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -261,6 +262,9 @@ function CourseCard({ course, leads, trainers, candidates, busyId, onAllot, onAd
             <Badge tone={course.isPublished ? 'green' : 'amber'}>
               {course.isPublished ? 'Published' : 'Draft'}
             </Badge>
+            {course.category && (
+              <Badge tone={toneForCategory(course.category)}>{course.category.name}</Badge>
+            )}
             {!course.trainer && <Badge tone="rose">Needs a lead</Badge>}
           </div>
 
@@ -318,44 +322,39 @@ function CourseCard({ course, leads, trainers, candidates, busyId, onAllot, onAd
 /** Who is on the course, at a glance. */
 function CourseSummary({ course }) {
   return (
-    <div className="flex flex-wrap items-start gap-x-10 gap-y-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Lead</p>
-        <div className="mt-1.5">
-          {course.trainer ? (
-            <span className="flex items-center gap-2">
-              <Avatar name={course.trainer.fullName} tone="indigo" />
-              <span className="text-sm font-medium text-slate-900">{course.trainer.fullName}</span>
-            </span>
-          ) : (
-            <span className="text-sm text-amber-700">Nobody yet</span>
-          )}
-        </div>
-      </div>
+    // Label beside the people rather than stacked above them, and one avatar
+    // size throughout. The two-block version was three lines tall to carry two
+    // short facts, which on a page of stacked cards is most of the scrolling.
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+      <span className="flex items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Lead</span>
+        {course.trainer ? (
+          <>
+            <Avatar name={course.trainer.fullName} tone="indigo" size="sm" />
+            <span className="font-medium text-slate-900">{course.trainer.fullName}</span>
+          </>
+        ) : (
+          <span className="text-amber-700">Nobody yet</span>
+        )}
+      </span>
 
-      <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <span className="h-4 w-px bg-slate-200" aria-hidden />
+
+      <span className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           Team ({course.team.length})
-        </p>
-        <div className="mt-1.5">
-          {course.team.length === 0 ? (
-            <span className="text-sm text-slate-400">No trainers added</span>
-          ) : (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              {course.team.map((member) => (
-                <span key={member.id} className="flex items-center gap-2">
-                  <Avatar
-                    name={member.fullName}
-                    tone={member.isActive ? 'sky' : 'amber'}
-                    size="sm"
-                  />
-                  <span className="text-sm text-slate-700">{member.fullName}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+        </span>
+        {course.team.length === 0 ? (
+          <span className="text-slate-400">No trainers added</span>
+        ) : (
+          course.team.map((member) => (
+            <span key={member.id} className="flex items-center gap-1.5">
+              <Avatar name={member.fullName} tone={member.isActive ? 'sky' : 'amber'} size="sm" />
+              <span className="text-slate-700">{member.fullName}</span>
+            </span>
+          ))
+        )}
+      </span>
     </div>
   );
 }

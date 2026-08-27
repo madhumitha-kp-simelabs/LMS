@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { HOME_FOR_ROLE, useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
@@ -16,6 +16,7 @@ const NAV_FOR_ROLE = {
     { to: '/home', label: 'Home' },
     { to: '/browse', label: 'Browse courses' },
     { to: '/my-courses', label: 'My courses' },
+    { to: '/my-projects', label: 'My projects' },
     { to: '/my-progress', label: 'My progress' },
   ],
   // `end` where a link has routes nested under it, so the parent does not stay
@@ -23,16 +24,40 @@ const NAV_FOR_ROLE = {
   //
   // A trainer writes the topics handed to them and nothing else, so they get one
   // link. A lead also fields join requests for the courses they run.
-  trainer: [{ to: '/trainer', label: 'My courses', end: true }],
-  lead: [
+  trainer: [
     { to: '/trainer', label: 'My courses', end: true },
+    { to: '/trainer/progress', label: 'Candidate progress' },
+    { to: '/trainer/progress', label: 'Progress' },
+    { to: '/trainer/feedback', label: 'Feedback' },
+  ],
+  // A lead has two lives and the nav has to say which is which. "My courses"
+  // was the label for the courses they run, which left nothing to call the
+  // courses they are taking — so running is now "Courses I lead" and "My
+  // learning" is theirs as a student. Leading comes first: it is why they sign
+  // in most days.
+  lead: [
+    { to: '/trainer', label: 'Courses I lead', end: true },
+    // Every project in the organisation, not only theirs — a lead is
+    // answerable for how the programme hangs together, not just their corner.
+    { to: '/trainer/progress', label: 'Candidate progress' },
+    { to: '/trainer/projects', label: 'Projects' },
+    { to: '/trainer/feedback', label: 'Feedback' },
     { to: '/trainer/inbox', label: 'Inbox', badge: 'requests' },
+    // Browse is where "what does the organisation teach?" gets answered — for
+    // a lead as much as a candidate. It sits on the learning side of the
+    // divider because that is the half of the app it belongs to, even though a
+    // lead often opens it to find a colleague's course rather than to enrol.
+    { to: '/browse', label: 'Browse courses', section: true },
+    { to: '/my-courses', label: 'My learning' },
+    { to: '/my-projects', label: 'My projects' },
   ],
   // An admin's "Courses" is the catalogue — what exists and what it is called.
   // Leads and trainers get the working view of the courses they are on.
   admin: [
     { to: '/admin/courses', label: 'Courses' },
     { to: '/admin/allotment', label: 'Allotment' },
+    { to: '/admin/projects', label: 'Projects' },
+    { to: '/trainer/feedback', label: 'Feedback' },
     { to: '/trainer/inbox', label: 'Inbox', badge: 'requests' },
     { to: '/admin', label: 'Administration', end: true },
   ],
@@ -50,8 +75,13 @@ export default function AppLayout() {
 
   const refreshPending = useCallback(() => {
     if (!staffMember) return;
-    api('/allot/requests')
-      .then(({ count }) => setPending(count))
+    // Both kinds of waiting, as one number: the badge answers "is there
+    // anything in my inbox", and splitting it into two counts on one icon
+    // would make the reader do the addition.
+    Promise.all([api('/allot/requests'), api('/sessions/inbox'), api('/extensions/inbox')])
+      .then(([joins, sessions, extensions]) =>
+        setPending((joins.count ?? 0) + (sessions.count ?? 0) + (extensions.count ?? 0)),
+      )
       // A failed badge count is not worth interrupting the page for.
       .catch(() => {});
   }, [staffMember]);
@@ -82,10 +112,16 @@ export default function AppLayout() {
               </span>
             </Link>
 
-            <nav className="flex gap-1">
+            <nav className="flex items-center gap-1">
               {links.map((link) => (
+                // A rule before `section`, so a lead's two lives read as two
+                // groups rather than one run-on list. Fragment keyed on the
+                // link, since the divider belongs to it.
+                <Fragment key={link.to}>
+                  {link.section && (
+                    <span className="mx-1.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden />
+                  )}
                 <NavLink
-                  key={link.to}
                   to={link.to}
                   end={link.end}
                   className={({ isActive }) =>
@@ -103,6 +139,7 @@ export default function AppLayout() {
                     </span>
                   )}
                 </NavLink>
+                </Fragment>
               ))}
             </nav>
           </div>

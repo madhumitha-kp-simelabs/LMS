@@ -64,10 +64,10 @@ export async function apiUpload(path, formData) {
  * Opens a protected file. The token lives in a header, not a cookie, so a plain
  * <a href> can't authenticate — we fetch the bytes and hand the browser a blob.
  */
-export async function openMaterial(materialId) {
+export async function openProtectedFile(path) {
   const token = tokenStore.get();
 
-  const res = await fetch(`/api/content/materials/${materialId}/file`, {
+  const res = await fetch(`/api${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 
@@ -81,3 +81,11 @@ export async function openMaterial(materialId) {
   // Give the new tab time to claim the blob before releasing it.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Course material, by id. */
+export const openMaterial = (materialId) =>
+  openProtectedFile(`/content/materials/${materialId}/file`);
+
+/** The file one candidate handed in for a project. */
+export const openProjectFile = (projectId, userId) =>
+  openProtectedFile(`/projects/${projectId}/work/${userId}/file`);
