@@ -172,6 +172,7 @@ router.get(
       return {
         id: course.id,
         code: course.code,
+        version: course.version,
         title: course.title,
         category: course.category,
         isPublished: course.isPublished,

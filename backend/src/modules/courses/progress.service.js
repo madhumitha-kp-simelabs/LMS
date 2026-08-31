@@ -28,7 +28,11 @@ export async function courseProgress(courseId) {
       },
     }),
     prisma.enrollment.findMany({
-      where: { courseId, status: 'active' },
+      // Superseded and discontinued both excluded: somebody who moved to a
+      // later edition, or who has stopped, is no longer this cohort's problem,
+      // and leaving them in would have every lead chasing people who are not
+      // coming back.
+      where: { courseId, status: 'active', supersededAt: null, discontinuedAt: null },
       include: { user: { select: { id: true, fullName: true, email: true } } },
       orderBy: { enrolledAt: 'asc' },
     }),

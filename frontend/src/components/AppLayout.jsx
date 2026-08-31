@@ -18,6 +18,7 @@ const NAV_FOR_ROLE = {
     { to: '/my-courses', label: 'My courses' },
     { to: '/my-projects', label: 'My projects' },
     { to: '/my-progress', label: 'My progress' },
+    { to: '/inbox', label: 'Inbox', badge: 'notices' },
   ],
   // `end` where a link has routes nested under it, so the parent does not stay
   // highlighted alongside the child.
@@ -50,6 +51,7 @@ const NAV_FOR_ROLE = {
     { to: '/browse', label: 'Browse courses', section: true },
     { to: '/my-courses', label: 'My learning' },
     { to: '/my-projects', label: 'My projects' },
+    { to: '/inbox', label: 'Inbox', badge: 'notices' },
   ],
   // An admin's "Courses" is the catalogue — what exists and what it is called.
   // Leads and trainers get the working view of the courses they are on.
@@ -70,21 +72,43 @@ export default function AppLayout() {
   const role = ROLE[user.role];
 
   const [pending, setPending] = useState(0);
+  const [unread, setUnread] = useState(0);
   // Only people who decide on join requests need the pending count.
   const staffMember = user.role === 'lead' || user.role === 'admin';
+  // And only people with an Inbox link need the unread one. A lead who is also
+  // learning has both links and both counts.
+  const reads = links.some((link) => link.badge === 'notices');
 
   const refreshPending = useCallback(() => {
+    if (reads) {
+      api('/notifications/count')
+        .then(({ count }) => setUnread(count))
+        .catch(() => {});
+    }
+
+    // Guarded per call, not with one early return: a candidate has no staff
+    // queue but does have notices, and returning here would cost them the count.
     if (!staffMember) return;
-    // Both kinds of waiting, as one number: the badge answers "is there
-    // anything in my inbox", and splitting it into two counts on one icon
-    // would make the reader do the addition.
-    Promise.all([api('/allot/requests'), api('/sessions/inbox'), api('/extensions/inbox')])
-      .then(([joins, sessions, extensions]) =>
-        setPending((joins.count ?? 0) + (sessions.count ?? 0) + (extensions.count ?? 0)),
+    // Every kind of waiting as one number: the badge answers "is there
+    // anything in my inbox", and four counts on one icon would make the
+    // reader do the addition.
+    Promise.all([
+      api('/allot/requests'),
+      api('/sessions/inbox'),
+      api('/extensions/inbox'),
+      api('/discontinuations/inbox'),
+    ])
+      .then(([joins, sessions, extensions, stopping]) =>
+        setPending(
+          (joins.count ?? 0) +
+            (sessions.count ?? 0) +
+            (extensions.count ?? 0) +
+            (stopping.count ?? 0),
+        ),
       )
       // A failed badge count is not worth interrupting the page for.
       .catch(() => {});
-  }, [staffMember]);
+  }, [staffMember, reads]);
 
   // Refresh on navigation, and whenever the inbox says it acted on something.
   useEffect(() => {
@@ -133,6 +157,11 @@ export default function AppLayout() {
                   }
                 >
                   {link.label}
+                  {link.badge === 'notices' && unread > 0 && (
+                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
+                      {unread}
+                    </span>
+                  )}
                   {link.badge === 'requests' && pending > 0 && (
                     <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
                       {pending}

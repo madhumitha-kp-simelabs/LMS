@@ -59,6 +59,22 @@ enum EnrollmentStatus {
  * asking for admin nobody would do.
  */
 /** An extension request's life. Mirrors SessionStatus; different decision. */
+/**
+ * Why somebody was told something. The kind drives the wording and the action
+ * offered, so a new reason to notify means a new member here rather than free
+ * text nobody can branch on.
+ */
+enum NoticeKind {
+  new_version // a later edition of a course they are on has been published
+}
+
+/** A request to leave a course: asked for, granted, or refused. */
+enum DiscontinueStatus {
+  requested
+  approved
+  declined
+}
+
 enum ExtensionStatus {
   requested
   approved
@@ -117,6 +133,9 @@ model User {
   projectWork      ProjectAllotment[] @relation("ProjectCandidate")
   projectsAllotted ProjectAllotment[] @relation("ProjectAllottedBy")
   projectsMarked   ProjectAllotment[] @relation("ProjectEvaluatedBy")
+  notifications     Notification[]     @relation("NotifiedUser")
+  discontinuesAsked   DiscontinuationRequest[] @relation("DiscontinueCandidate")
+  discontinuesDecided DiscontinuationRequest[] @relation("DiscontinueDecidedBy")
   extensionsAsked   ExtensionRequest[] @relation("ExtensionCandidate")
   extensionsDecided ExtensionRequest[] @relation("ExtensionDecidedBy")
   sessionsAsked    SessionRequest[]   @relation("SessionCandidate")
@@ -133,7 +152,19 @@ model User {
 
 model Course {
   id            String   @id @default(uuid())
-  code          String   @unique // e.g. "PM-101"
+  /**
+   * The subject, and which edition of it.
+   *
+   * A course is versioned by copying it: PM-101 v2 is a separate row from
+   * PM-101 v1, with its own topics, its own candidates and its own results.
+   * That is what lets a cohort finish the edition they started while the next
+   * one is being taught alongside — which a single row with a version counter
+   * cannot do, because there is only one set of topics to go round.
+   *
+   * So `code` is no longer unique on its own; the pair is.
+   */
+  code          String
+  version       Int      @default(1)
   title         String
   description   String?
   // How long the course is expected to take, in weeks. Optional — used to show
@@ -161,7 +192,10 @@ model Course {
   feedback    CourseFeedback[]
   sessions    SessionRequest[]
   extensions  ExtensionRequest[]
+  discontinues DiscontinuationRequest[]
+  notices     Notification[]
 
+  @@unique([code, version])
   @@index([ownerId])
   @@index([categoryId])
   @@map("courses")
@@ -469,6 +503,26 @@ model Enrollment {
   pausedAt   DateTime?
   pausedDays Int       @default(0)
 
+  /**
+   * Set when the candidate moved off this edition onto a later one.
+   *
+   * The row stays rather than being deleted: the quizzes they sat and the marks
+   * they earned happened on this version, and throwing the enrolment away would
+   * orphan them. Superseded enrolments are filtered out of the candidate's own
+   * lists and out of a lead's cohort, but the history is still there to read.
+   */
+  supersededAt DateTime?
+
+  /**
+   * Set when an administrator approves a request to leave.
+   *
+   * Like supersededAt, the row stays: somebody who stopped halfway still sat
+   * the quizzes they sat, and the training record has to show what happened
+   * rather than quietly losing the person. It is a third way an enrolment ends,
+   * beside finishing it and moving to a later edition.
+   */
+  discontinuedAt DateTime?
+
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
@@ -550,19 +604,95 @@ model CourseFeedback {
  * difference would make the record read as though the candidate got what they
  * asked for.
  */
+/**
+ * Something a candidate needs to know.
+ *
+ * Written when it happens rather than derived on read. "PM-101 v2 was published
+ * on the 3rd" is a fact about that day; recomputing it from current state would
+ * lose it as soon as v3 landed.
+ *
+ * `courseId` points at what the notice is *about* — for a new version, the new
+ * edition, because that is where the action leads.
+ */
+model Notification {
+  id     String     @id @default(uuid())
+  userId String
+  kind   NoticeKind
+  title  String
+  body   String?
+
+  courseId  String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user   User    @relation("NotifiedUser", fields: [userId], references: [id], onDelete: Cascade)
+  course Course? @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  // The query behind the badge: one person's unread, newest first.
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/**
+ * A candidate asking to stop a course.
+ *
+ * The reason is required and kept: the handbook wants discontinuance logged,
+ * and the reasons are the useful part — a course people leave because they were
+ * moved onto a project is a staffing problem, and one people leave because it
+ * is too hard is a course problem. Those need telling apart.
+ *
+ * Approved by an administrator rather than the course's lead. A lead losing a
+ * candidate has an interest in the answer, which is exactly why the decision
+ * sits with somebody who does not.
+ */
+model DiscontinuationRequest {
+  id       String            @id @default(uuid())
+  courseId String
+  userId   String
+  status   DiscontinueStatus @default(requested)
+  reason   String
+
+  response    String?
+  decidedById String?
+  decidedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user      User   @relation("DiscontinueCandidate", fields: [userId], references: [id], onDelete: Cascade)
+  decidedBy User?  @relation("DiscontinueDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([courseId, status])
+  @@index([userId])
+  @@map("discontinuation_requests")
+}
+
 model ExtensionRequest {
   id       String          @id @default(uuid())
   courseId String
   userId   String
   status   ExtensionStatus @default(requested)
-  // How many extra days the candidate asked for, and why.
-  days   Int
-  reason String
+  /**
+   * The date the candidate wants to be given until, and why.
+   *
+   * A date rather than a number of days, because that is the shape of the
+   * thought: somebody asks for time because of something with a date on it —
+   * a release, a leave, a project ending — and making them convert that into
+   * "eleven days" only to have the server convert it back invites off-by-one
+   * arguments about which day they actually meant.
+   */
+  requestedUntil DateTime
+  reason         String
 
-  // What the lead granted. `grantedDays` may differ from `days`, and is null
-  // on a decline.
-  grantedDays Int?
-  response    String?
+  /**
+   * What the lead actually gave. May be earlier than requested — a lead who
+   * grants a fortnight against a request for a month has said something, and
+   * storing only the outcome would make the record read as though the
+   * candidate got what they asked for. Null on a decline.
+   */
+  grantedUntil DateTime?
+  response     String?
   decidedById String?
   decidedAt   DateTime?
 

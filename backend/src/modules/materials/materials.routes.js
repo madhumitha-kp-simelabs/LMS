@@ -107,7 +107,20 @@ router.delete(
 
     await assertMaterialWrite(req.user, material.topicId);
     await prisma.material.delete({ where: { id: material.id } });
-    if (material.fileUrl) await deleteFile(material.fileUrl);
+
+    /**
+     * The file goes only when nothing else points at it.
+     *
+     * Versioning a course copies its material rows against the same storage
+     * key rather than duplicating the file — two identical PDFs is twice the
+     * storage for no gain. The cost is that deleting one version's copy would,
+     * without this, pull the file out from under every other version still
+     * using it.
+     */
+    if (material.fileUrl) {
+      const stillUsed = await prisma.material.count({ where: { fileUrl: material.fileUrl } });
+      if (stillUsed === 0) await deleteFile(material.fileUrl);
+    }
 
     res.status(204).end();
   }),

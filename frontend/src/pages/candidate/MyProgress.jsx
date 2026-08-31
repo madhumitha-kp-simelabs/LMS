@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
-import { Alert, Card, Empty } from '../../components/ui';
+import { Alert, Badge, Card, Empty } from '../../components/ui';
 import CourseFeedback from './CourseFeedback';
 import SessionRequest from './SessionRequest';
 import CourseSchedule from './CourseSchedule';
@@ -80,7 +80,13 @@ function CourseProgress({ course, onChanged }) {
 
   return (
     <section>
-      <p className="text-base font-semibold tracking-wide text-indigo-600">{course.code}</p>
+      <p className="flex flex-wrap items-baseline gap-2">
+        <span className="text-base font-semibold tracking-wide text-indigo-600">{course.code}</span>
+        <span className="text-xs text-slate-400">v{course.version}</span>
+        {/* Says why this one is not in My courses any more. Without it a
+            finished-looking record with no way back reads as a fault. */}
+        {course.dates?.supersededAt && <Badge tone="slate">Moved to a later version</Badge>}
+      </p>
       <h2 className="font-semibold text-slate-900">{course.title}</h2>
       <CourseDates dates={course.dates} />
 

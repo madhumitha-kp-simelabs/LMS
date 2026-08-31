@@ -12,11 +12,13 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const daysUntil = (value) => Math.ceil((new Date(value).getTime() - Date.now()) / 86400000);
 
+const asDateInput = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '');
+
 /**
  * Candidates asking for more time.
  *
- * The lead needs three things to answer: how long they want, why, and what
- * their deadline is now — so the form carries all three rather than sending
+ * The lead needs three things to answer: the date they want, why, and what
+ * their deadline is now — so the card carries all three rather than sending
  * anybody to another screen to look the last one up.
  */
 export default function ExtensionQueue({ extensions, onChanged, onError }) {
@@ -52,7 +54,7 @@ export default function ExtensionQueue({ extensions, onChanged, onError }) {
               </div>
 
               <div className="shrink-0 text-right">
-                <Badge tone="sky">{plural(request.days, 'day')} asked</Badge>
+                <Badge tone="sky">Until {formatDate(request.requestedUntil)}</Badge>
                 {due && (
                   <p className="mt-1 text-xs text-slate-500">
                     Due {formatDate(due)}
@@ -96,14 +98,16 @@ export default function ExtensionQueue({ extensions, onChanged, onError }) {
 }
 
 /**
- * Granting the days, or refusing them.
+ * Granting the date, or refusing it.
  *
- * The days box is pre-filled with what was asked for, because agreeing is the
- * common case and a lead who wants to grant less should have to change a
- * number rather than type one from scratch.
+ * The date box is pre-filled with the one asked for, because agreeing is the
+ * common case; a lead who wants to give less adjusts it rather than working out
+ * a date from scratch.
  */
 function AnswerForm({ request, onDone, onChanged, onError }) {
-  const [days, setDays] = useState(String(request.days));
+  // Pre-filled with the date asked for: agreeing is the common case, and a lead
+  // who wants to give less should change a date rather than find one.
+  const [until, setUntil] = useState(asDateInput(request.requestedUntil));
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -115,7 +119,7 @@ function AnswerForm({ request, onDone, onChanged, onError }) {
         method: 'PATCH',
         body: {
           status,
-          grantedDays: status === 'approved' ? Number(days) : null,
+          grantedUntil: status === 'approved' ? until : null,
           response: note.trim(),
         },
       });
@@ -128,26 +132,28 @@ function AnswerForm({ request, onDone, onChanged, onError }) {
     }
   }
 
-  const granting = Number(days);
-  const fewer = granting > 0 && granting < request.days;
+  // Giving an earlier date than asked for is a real answer, but one worth
+  // explaining — so say so rather than letting it pass silently.
+  const shorter = until && new Date(until) < new Date(request.requestedUntil);
 
   return (
     <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
       <div className="flex flex-wrap items-end gap-3">
-        <div className="w-36">
+        <div className="w-52">
           <Input
-            label="Days to grant"
-            type="number"
-            min={1}
-            max={90}
+            label="Give them until"
+            type="date"
             autoFocus
-            value={days}
-            onChange={(event) => setDays(event.target.value)}
+            // Never earlier than the deadline they already have; that would be
+            // shortening the course under the name of an extension.
+            min={request.enrolment?.dueAt ? asDateInput(request.enrolment.dueAt) : undefined}
+            value={until}
+            onChange={(event) => setUntil(event.target.value)}
           />
         </div>
-        {fewer && (
+        {shorter && (
           <p className="pb-2 text-xs text-amber-700">
-            Less than the {plural(request.days, 'day')} asked for — worth saying why below.
+            Earlier than the {formatDate(request.requestedUntil)} asked for — worth saying why below.
           </p>
         )}
       </div>
@@ -162,8 +168,8 @@ function AnswerForm({ request, onDone, onChanged, onError }) {
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={busy || !granting} onClick={() => submit('approved')}>
-          {busy ? 'Saving…' : `Grant ${plural(granting || 0, 'day')}`}
+        <Button size="sm" disabled={busy || !until} onClick={() => submit('approved')}>
+          {busy ? 'Saving…' : `Grant until ${until ? formatDate(until) : '…'}`}
         </Button>
         <Button
           variant="danger"
@@ -178,7 +184,7 @@ function AnswerForm({ request, onDone, onChanged, onError }) {
           Cancel
         </Button>
         <p className="text-xs text-slate-500">
-          Granting moves their deadline from where it stands, not from today.
+          Their deadline becomes this date exactly, whenever you answer.
         </p>
       </div>
     </div>

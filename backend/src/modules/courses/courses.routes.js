@@ -114,6 +114,21 @@ router.get(
   }),
 );
 
+/**
+ * Copying a course into its next version — the way a revised edition is made.
+ *
+ * Everything describing the course comes across; nobody on it does. The copy is
+ * a draft, so the cohort part-way through the current edition is undisturbed
+ * while the new one is revised.
+ */
+router.post(
+  '/:courseId/duplicate',
+  handle(async (req, res) => {
+    const course = await courses.duplicateCourse(req.user, req.params.courseId);
+    res.status(201).json({ course });
+  }),
+);
+
 router.post(
   '/:courseId/topics',
   handle(async (req, res) => {

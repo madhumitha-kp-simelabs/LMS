@@ -202,6 +202,7 @@ router.get(
               select: {
                 id: true,
                 code: true,
+                version: true,
                 title: true,
                 description: true,
                 category: { select: { id: true, name: true, slug: true, position: true } },
@@ -257,11 +258,28 @@ router.get(
         dueAt: true,
         pausedAt: true,
         pausedDays: true,
+        supersededAt: true,
+        discontinuedAt: true,
       },
     });
     const progressByCourse = new Map(enrolments.map((e) => [e.courseId, e]));
 
-    const courses = [...byCourse.values()].map((course) => {
+    const courses = [...byCourse.values()]
+      /**
+       * Editions they have moved off are not courses they are studying.
+       *
+       * This list is built from topic assignments, and moving to a later
+       * version deliberately leaves the old ones in place so the results
+       * earned against them survive. That makes the enrolment, not the
+       * assignment, the thing that says whether a course is still theirs.
+       */
+      .filter((course) => {
+        const enrolment = progressByCourse.get(course.id);
+        // Moved off, or stopped. Both leave the enrolment in place so the marks
+        // earned against it survive; neither is still something being studied.
+        return !enrolment?.supersededAt && !enrolment?.discontinuedAt;
+      })
+      .map((course) => {
       const topics = course.topics.sort((a, b) => a.position - b.position);
       const enrolment = progressByCourse.get(course.id);
 
@@ -319,6 +337,7 @@ router.get(
         select: {
           id: true,
           code: true,
+          version: true,
           title: true,
           description: true,
           durationWeeks: true,
@@ -357,6 +376,7 @@ router.get(
       courses: courses.map((course) => ({
         id: course.id,
         code: course.code,
+        version: course.version,
         title: course.title,
         description: course.description,
         durationWeeks: course.durationWeeks,
@@ -433,6 +453,98 @@ router.post(
     });
 
     res.json({ resumed: true, daysPaused: lost, dueAt: updated.dueAt });
+  }),
+);
+
+/**
+ * Moving across to a later edition of a course already being taken.
+ *
+ * Not a join request. The candidate was admitted to this subject when they were
+ * put on the earlier version, and asking a lead to re-approve somebody already
+ * halfway through their course would make the notice an obstacle rather than an
+ * offer. So the move is immediate.
+ *
+ * What it does: enrols them on the new edition, gives them its published
+ * topics, and marks the old enrolment superseded. The old row stays — the
+ * quizzes they sat happened on that version, and their marks belong to it.
+ * Nothing is carried forward, because a revised topic is not the topic they
+ * were scored on and pretending otherwise would overstate what they have done.
+ */
+router.post(
+  '/courses/:courseId/move-here',
+  handle(async (req, res) => {
+    const target = await prisma.course.findFirst({
+      where: { id: req.params.courseId, isPublished: true },
+      select: { id: true, code: true, version: true, durationWeeks: true },
+    });
+    if (!target) throw new AppError(404, 'Course not found');
+
+    // The edition they are leaving: active, unfinished, same subject, older.
+    const from = await prisma.enrollment.findFirst({
+      where: {
+        userId: req.user.id,
+        status: 'active',
+        supersededAt: null,
+        completedAt: null,
+        course: { code: target.code, version: { lt: target.version } },
+      },
+      orderBy: { course: { version: 'desc' } },
+      include: { course: { select: { id: true, version: true } } },
+    });
+    if (!from) {
+      throw new AppError(409, 'You are not on an earlier version of that course');
+    }
+
+    const topics = await prisma.topic.findMany({
+      where: { courseId: target.id, isPublished: true },
+      select: { id: true },
+    });
+
+    // One transaction: half a move — enrolled on the new edition but still
+    // counted on the old, or the reverse — is worse than not moving.
+    await prisma.$transaction(async (tx) => {
+      await tx.enrollment.update({
+        where: { id: from.id },
+        data: { supersededAt: new Date() },
+      });
+
+      /**
+       * The new edition starts today and runs its own full duration.
+       *
+       * Not the remainder of the old deadline: they are starting the revised
+       * material from the beginning, and inheriting a clock that was counting
+       * down against different topics would punish them for moving.
+       */
+      const startedAt = new Date();
+      const dueAt = target.durationWeeks
+        ? new Date(startedAt.getTime() + target.durationWeeks * 7 * 86400000)
+        : null;
+
+      await tx.enrollment.upsert({
+        where: { userId_courseId: { userId: req.user.id, courseId: target.id } },
+        update: { status: 'active', supersededAt: null, startedAt, dueAt },
+        create: { userId: req.user.id, courseId: target.id, status: 'active', startedAt, dueAt },
+      });
+
+      if (topics.length > 0) {
+        await tx.topicAssignment.createMany({
+          data: topics.map((topic) => ({
+            userId: req.user.id,
+            topicId: topic.id,
+            // Their own move, so their own name against it.
+            assignedBy: req.user.id,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    });
+
+    res.json({
+      moved: true,
+      from: from.course.version,
+      to: target.version,
+      topics: topics.length,
+    });
   }),
 );
 
@@ -594,7 +706,7 @@ router.get(
         include: {
           topic: {
             include: {
-              course: { select: { id: true, code: true, title: true } },
+              course: { select: { id: true, code: true, version: true, title: true } },
               quiz: { select: { id: true, title: true, isPublished: true, passPercentage: true } },
             },
           },
@@ -610,6 +722,8 @@ router.get(
           dueAt: true,
           pausedAt: true,
           pausedDays: true,
+          supersededAt: true,
+          discontinuedAt: true,
         },
       }),
     ]);
@@ -695,6 +809,11 @@ router.get(
           enrolledAt: dates?.enrolledAt ?? null,
           startedAt: dates?.startedAt ?? null,
           dueAt: dates?.dueAt ?? null,
+          // Kept, not hidden: the quizzes they sat on this edition are theirs,
+          // and a record that quietly drops what you did is worse than one that
+          // says you have moved on — or stopped.
+          supersededAt: dates?.supersededAt ?? null,
+          discontinuedAt: dates?.discontinuedAt ?? null,
           pausedAt: dates?.pausedAt ?? null,
           pausedDays: dates?.pausedDays ?? 0,
           completedAt: dates?.completedAt ?? null,

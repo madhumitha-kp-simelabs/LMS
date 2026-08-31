@@ -24,6 +24,7 @@ import CandidateHome from './pages/candidate/CandidateHome';
 import MyCourses from './pages/candidate/MyCourses';
 import MyProgress from './pages/candidate/MyProgress';
 import MyProjects from './pages/candidate/MyProjects';
+import Notifications from './pages/candidate/Notifications';
 
 /** Sends "/" to whichever home matches the signed-in role. */
 function RootRedirect() {
@@ -59,6 +60,7 @@ export default function App() {
                 <Route path="/my-courses" element={<MyCourses />} />
                 <Route path="/my-progress" element={<MyProgress />} />
                 <Route path="/my-projects" element={<MyProjects />} />
+                <Route path="/inbox" element={<Notifications />} />
               </Route>
 
               <Route element={<ProtectedRoute roles={['trainer', 'lead', 'admin']} />}>

@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 /**
  * Small shared primitives.
  *
@@ -235,4 +237,57 @@ export function formatBytes(bytes) {
   if (!bytes) return '';
   const mb = bytes / (1024 * 1024);
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/**
+ * A modal dialog.
+ *
+ * Rendered through a portal onto document.body rather than in place: these open
+ * from inside cards that clip their overflow and stack their own z-index, and a
+ * dialog that appears half-cut-off behind the thing that opened it is worse
+ * than no dialog.
+ *
+ * Escape closes it, and so does the backdrop — a dialog you can only leave by
+ * finding the right button is a trap. The panel itself stops the click, or
+ * every press inside would dismiss it.
+ */
+export function Modal({ open, title, onClose, children }) {
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const onKey = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+
+    // The page behind must not scroll under the dialog.
+    const { overflow } = document.body.style;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = overflow;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-[2px]"
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+      >
+        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <div className="mt-3">{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
 }

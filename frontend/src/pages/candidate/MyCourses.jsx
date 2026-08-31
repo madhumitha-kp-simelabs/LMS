@@ -3,6 +3,8 @@ import { api, openMaterial } from '../../lib/api';
 import { Alert, Badge, Button, Card, Empty, formatBytes } from '../../components/ui';
 import TopicQuiz from './TopicQuiz';
 import { groupByCategory } from '../../lib/categories';
+import CourseSchedule from './CourseSchedule';
+import DiscontinueCourse from './DiscontinueCourse';
 import CategoryHeading from '../../components/CategoryHeading';
 
 /**
@@ -208,6 +210,7 @@ export default function MyCourses() {
             <CoursePicker
               courses={courses}
               onStart={(course) => setSelectedTopicId(nextUp(course)?.id ?? null)}
+              onChanged={loadCourses}
             />
           ) : !topic ? (
             <p className="text-sm text-slate-500">Loading…</p>
@@ -222,6 +225,12 @@ export default function MyCourses() {
               >
                 ← All my courses
               </button>
+
+              {/* The deadline for the course being read, and the two things you
+                  can do about it. Here rather than in the sidebar because a
+                  date picker and a reason box need the width — and because this
+                  is where your eyes are when you notice the time. */}
+              {openCourse && <CourseSchedule course={openCourse} onChanged={loadCourses} />}
 
               <Card>
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -426,7 +435,7 @@ function TopicStep({ current, previous, next, onGo }) {
  * not yet decided anything. This is the deciding screen: what each course is,
  * how far in you are, and the way in.
  */
-function CoursePicker({ courses, onStart }) {
+function CoursePicker({ courses, onStart, onChanged }) {
   return (
     <div className="space-y-4">
       <div>
@@ -487,6 +496,10 @@ function CoursePicker({ courses, onStart }) {
                 )}
               </div>
             </div>
+
+            <CourseSchedule course={course} onChanged={onChanged} compact />
+
+            <DiscontinueCourse course={course} onChanged={onChanged} />
           </Card>
         );
       })}

@@ -58,15 +58,42 @@ export default function AdminCourses() {
     }
   }
 
-  const create = ({ code, title, categoryId }) =>
+  const create = ({ code, title, version, categoryId }) =>
     run(
       () =>
         api('/admin/courses', {
           method: 'POST',
-          body: { code, title, categoryId: categoryId || null },
+          body: {
+            code,
+            title,
+            version: Number(version) || 1,
+            categoryId: categoryId || null,
+          },
         }),
-      `${code} added. Allot it to a lead when you are ready.`,
+      `${code} v${Number(version) || 1} added. Allot it to a lead when you are ready.`,
     );
+
+  /**
+   * Copying a course into its next version.
+   *
+   * Confirmed first: it is not destructive, but it produces a whole second
+   * course, and somebody who clicked it by accident would find one they then
+   * have to work out how to remove.
+   */
+  const duplicate = (course) => {
+    if (
+      !window.confirm(
+        `Copy ${course.code} v${course.version} — its topics, material, quizzes and project briefs — into a new version? Nobody on the current one is affected.`,
+      )
+    ) {
+      return Promise.resolve(false);
+    }
+
+    return run(async () => {
+      const { course: copy } = await api(`/courses/${course.id}/duplicate`, { method: 'POST' });
+      return copy;
+    }, `${course.code} copied to v${course.version + 1}. It starts as a draft — revise it, then publish.`);
+  };
 
   const addCategory = (name) =>
     run(() => api('/categories', { method: 'POST', body: { name } }), `"${name}" added.`);
@@ -154,6 +181,7 @@ export default function AdminCourses() {
               categories={categories}
               busy={busy}
               onSave={saveCourse}
+              onDuplicate={duplicate}
             />
           </div>
         </section>
@@ -173,14 +201,14 @@ const Heading = () => (
 );
 
 function NewCourseForm({ busy, categories, onCreate }) {
-  const [form, setForm] = useState({ code: '', title: '', categoryId: '' });
+  const [form, setForm] = useState({ code: '', title: '', version: '1', categoryId: '' });
 
   async function handleSubmit(event) {
     event.preventDefault();
     const added = await onCreate(form);
     // The category survives the reset: adding three Frontend courses in a row
     // should not mean picking Frontend three times.
-    if (added) setForm({ code: '', title: '', categoryId: form.categoryId });
+    if (added) setForm({ code: '', title: '', version: '1', categoryId: form.categoryId });
   }
 
   return (
@@ -188,13 +216,24 @@ function NewCourseForm({ busy, categories, onCreate }) {
       <h2 className="text-lg font-semibold text-slate-900">Add a course</h2>
 
       <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-        <div className="grid gap-4 sm:grid-cols-[150px_1fr]">
+        <div className="grid gap-4 sm:grid-cols-[150px_90px_1fr]">
           <Input
             label="Course code"
             placeholder="PM-103"
             required
             value={form.code}
             onChange={(event) => setForm({ ...form, code: event.target.value })}
+          />
+          {/* Usually 1. Typed rather than fixed because a course brought in
+              from elsewhere may already be at its third edition. */}
+          <Input
+            label="Version"
+            type="number"
+            min={1}
+            max={99}
+            required
+            value={form.version}
+            onChange={(event) => setForm({ ...form, version: event.target.value })}
           />
           <Input
             label="Title"
@@ -406,7 +445,7 @@ function RenameRow({ category, busy, onSave, onCancel }) {
  * That is the trick that lets the catalogue be grouped and still be a table.
  */
 const GRID =
-  'grid grid-cols-[minmax(0,1fr)_150px_64px_92px_104px_72px] items-center gap-x-4';
+  'grid grid-cols-[minmax(0,1fr)_150px_64px_92px_104px_150px] items-center gap-x-4';
 
 /**
  * The catalogue, grouped by what each course is about.
@@ -417,7 +456,7 @@ const GRID =
  * content that never came. Empty categories are now a single quiet line at the
  * bottom, and each category that does hold something gets its own card.
  */
-function CourseCatalogue({ courses, categories, busy, onSave }) {
+function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate }) {
   // One row at a time: two half-finished edits on screen is a way to save the
   // wrong one.
   const [editingId, setEditingId] = useState(null);
@@ -489,6 +528,7 @@ function CourseCatalogue({ courses, categories, busy, onSave }) {
                       course={course}
                       busy={busy}
                       onEdit={() => setEditingId(course.id)}
+                      onDuplicate={() => onDuplicate(course)}
                     />
                   )}
                 </li>
@@ -515,12 +555,13 @@ function CourseCatalogue({ courses, categories, busy, onSave }) {
   );
 }
 
-function CourseRow({ course, busy, onEdit }) {
+function CourseRow({ course, busy, onEdit, onDuplicate }) {
   return (
     <div className={`${GRID} px-5 py-3.5 transition hover:bg-slate-50/70`}>
       <Link to={`/trainer/courses/${course.id}`} className="group min-w-0">
-        <span className="block text-xs font-semibold tracking-wide text-indigo-600">
-          {course.code}
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-xs font-semibold tracking-wide text-indigo-600">{course.code}</span>
+          <span className="text-xs text-slate-400">v{course.version}</span>
         </span>
         <span className="block truncate font-medium text-slate-900 group-hover:text-indigo-700">
           {course.title}
@@ -550,9 +591,18 @@ function CourseRow({ course, busy, onEdit }) {
         </Badge>
       </span>
 
-      <span className="text-right">
+      <span className="flex justify-end gap-1.5">
         <Button variant="secondary" size="sm" disabled={busy} onClick={onEdit}>
           Edit
+        </Button>
+        <Button
+          variant="subtle"
+          size="sm"
+          disabled={busy}
+          onClick={onDuplicate}
+          title={`Copy into v${course.version + 1} and revise it there`}
+        >
+          + Version
         </Button>
       </span>
     </div>
@@ -571,6 +621,7 @@ function CourseEditForm({ course, categories, busy, onSave, onCancel }) {
     // Kept as a string because the input hands one back; an empty box means
     // "no duration set" rather than zero weeks.
     durationWeeks: course.durationWeeks == null ? '' : String(course.durationWeeks),
+    version: String(course.version),
     // '' rather than null, because that is what an unselected <select> holds.
     categoryId: course.category?.id ?? '',
   });
@@ -580,9 +631,11 @@ function CourseEditForm({ course, categories, busy, onSave, onCancel }) {
   const description = form.description.trim();
   const durationWeeks = form.durationWeeks === '' ? null : Number(form.durationWeeks);
   const categoryId = form.categoryId || null;
+  const version = Number(form.version) || 1;
 
   const was = {
     code: course.code,
+    version: course.version,
     title: course.title,
     description: course.description ?? '',
     durationWeeks: course.durationWeeks ?? null,
@@ -591,6 +644,7 @@ function CourseEditForm({ course, categories, busy, onSave, onCancel }) {
 
   const changed =
     code !== was.code ||
+    version !== was.version ||
     title !== was.title ||
     description !== was.description ||
     durationWeeks !== was.durationWeeks ||
@@ -604,6 +658,7 @@ function CourseEditForm({ course, categories, busy, onSave, onCancel }) {
     // clashes against itself.
     onSave({
       ...(code !== was.code && { code }),
+      ...(version !== was.version && { version }),
       ...(title !== was.title && { title }),
       // null, not undefined — JSON drops undefined, so an emptied box would
       // never reach the API and the description could not be cleared.
@@ -626,6 +681,18 @@ function CourseEditForm({ course, categories, busy, onSave, onCancel }) {
             className="uppercase"
             value={form.code}
             onChange={(event) => setForm({ ...form, code: event.target.value })}
+          />
+        </div>
+
+        <div className="w-24">
+          <Input
+            label="Version"
+            type="number"
+            min={1}
+            max={99}
+            required
+            value={form.version}
+            onChange={(event) => setForm({ ...form, version: event.target.value })}
           />
         </div>
 

@@ -76,6 +76,7 @@ export default function CourseDetail() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <CourseCode course={course} onChanged={load} onError={setError} />
+              <span className="text-sm font-medium text-slate-400">v{course.version}</span>
               <h1 className="text-xl font-semibold text-slate-900">{course.title}</h1>
               <Badge tone={course.isPublished ? 'green' : 'amber'}>
                 {course.isPublished ? 'Published' : 'Draft'}
@@ -1104,3 +1105,4 @@ function AllotmentSection({ topic, candidates, onChanged, onError }) {
     </Card>
   );
 }
+

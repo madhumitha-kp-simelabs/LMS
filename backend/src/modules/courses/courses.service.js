@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { AppError } from '../../middleware/error.js';
+import { announceNewVersion } from '../notifications/notify.js';
 
 
 /**
@@ -230,10 +231,13 @@ export async function getCourse(user, courseId) {
  * Codes are unique; report the clash rather than letting the constraint surface
  * as an opaque 500. `exceptId` lets an update keep its own code.
  */
-async function assertCodeFree(code, exceptId, client = prisma) {
-  const clash = await client.course.findUnique({ where: { code } });
+async function assertCodeFree(code, version, exceptId, client = prisma) {
+  const clash = await client.course.findFirst({ where: { code, version } });
   if (clash && clash.id !== exceptId) {
-    throw new AppError(409, `Course code "${code}" is already in use`);
+    throw new AppError(
+      409,
+      `${code} version ${version} already exists — give this one a different version.`,
+    );
   }
 }
 
@@ -245,7 +249,7 @@ async function assertCodeFree(code, exceptId, client = prisma) {
  * the promotion and the course appear together or not at all.
  */
 export async function createCourseForLead(ownerId, data, client = prisma) {
-  await assertCodeFree(data.code, undefined, client);
+  await assertCodeFree(data.code, data.version ?? 1, undefined, client);
 
   return client.course.create({
     data: { ...data, ownerId },
@@ -259,10 +263,62 @@ export async function createCourseForLead(ownerId, data, client = prisma) {
 export async function updateCourse(user, courseId, data) {
   // The whole of a course's own record — code, title, duration, publish state —
   // is the lead's to change.
-  await assertCourseLead(user, courseId);
-  if (data.code) await assertCodeFree(data.code, courseId);
+  const course = await assertCourseLead(user, courseId);
+  // Either half of the pair moving can collide, so check whenever either does,
+  // against whatever the other half will be once this save lands.
+  if (data.code || data.version) {
+    await assertCodeFree(data.code ?? course.code, data.version ?? course.version, courseId);
+  }
 
-  return prisma.course.update({ where: { id: courseId }, data });
+  const updated = await prisma.course.update({ where: { id: courseId }, data });
+
+  /**
+   * Giving a running course a duration gives its cohort deadlines.
+   *
+   * Without this, a lead who sets the length after people have started hands a
+   * deadline to nobody already on it — the date is stamped when somebody starts,
+   * and they already have. Only enrolments that started and have no deadline
+   * are touched, so an extension somebody was granted is never overwritten.
+   */
+  if (data.durationWeeks != null && data.durationWeeks !== course.durationWeeks) {
+    const waiting = await prisma.enrollment.findMany({
+      where: { courseId, startedAt: { not: null }, dueAt: null },
+      select: { id: true, startedAt: true },
+    });
+
+    for (const enrolment of waiting) {
+      await prisma.enrollment.update({
+        where: { id: enrolment.id },
+        data: {
+          dueAt: new Date(
+            enrolment.startedAt.getTime() + data.durationWeeks * 7 * 86400000,
+          ),
+        },
+      });
+    }
+  }
+
+  /**
+   * Publishing a later edition is what tells the cohort still on an earlier one.
+   *
+   * The publish, not the copy: a duplicated course is a draft with unrevised
+   * material, and pointing candidates at it before anybody has finished the
+   * revision would be worse than saying nothing. This is the moment there is
+   * actually something to move to.
+   *
+   * Only on the transition into published, so a lead editing the title of an
+   * already-live v2 does not re-announce it.
+   */
+  if (data.isPublished === true && !course.isPublished && updated.version > 1) {
+    try {
+      await announceNewVersion(updated);
+    } catch {
+      // The course is published either way; a missed notice is not worth
+      // failing that, and the lead can republish to try again.
+    }
+  }
+
+  return updated;
 }
 
 export async function deleteCourse(user, courseId) {
@@ -432,5 +488,160 @@ export async function assignTopicDuties(user, topicId, duties) {
       materialTrainer: { select: { id: true, fullName: true } },
       quizTrainer: { select: { id: true, fullName: true } },
     },
+  });
+}
+
+/**
+ * Copying a course into its next version.
+ *
+ * The point of versioning by copy is that both editions run at once: the cohort
+ * part-way through v1 keeps the material they started on, while v2 is revised
+ * and taught alongside. So this brings across everything that describes the
+ * course — topics, material, quizzes with their questions, project briefs —
+ * and none of the people: no enrolments, no allotments, no attempts, no
+ * feedback. Those belong to the edition they happened on.
+ *
+ * The copy starts as a draft whatever the original was. A new version appearing
+ * in front of candidates the instant it is created, before anybody has revised
+ * a word of it, is the opposite of what it is for.
+ */
+export async function duplicateCourse(user, courseId) {
+  const source = await prisma.course.findUnique({
+    where: { id: courseId },
+    include: {
+      topics: {
+        orderBy: { position: 'asc' },
+        include: {
+          materials: { orderBy: { position: 'asc' } },
+          quiz: { include: { questions: { include: { options: true } } } },
+        },
+      },
+      projects: { orderBy: { position: 'asc' } },
+    },
+  });
+  if (!source) throw new AppError(404, 'Course not found');
+
+  // Anyone who may edit the course may version it — it is the same act of
+  // authorship, and the copy is a draft nobody can see yet.
+  await assertCourseLead(user, courseId);
+
+  // Next after the highest that exists, not source.version + 1: v2 may already
+  // have been made from v1, and the answer then is v3.
+  const latest = await prisma.course.findFirst({
+    where: { code: source.code },
+    orderBy: { version: 'desc' },
+    select: { version: true },
+  });
+  const version = latest.version + 1;
+
+  // One transaction: a course whose topics half-copied is worse than no copy,
+  // because it looks finished.
+  return prisma.$transaction(async (tx) => {
+    const copy = await tx.course.create({
+      data: {
+        code: source.code,
+        version,
+        title: source.title,
+        description: source.description,
+        durationWeeks: source.durationWeeks,
+        categoryId: source.categoryId,
+        ownerId: source.ownerId,
+        isPublished: false,
+      },
+    });
+
+    for (const topic of source.topics) {
+      const newTopic = await tx.topic.create({
+        data: {
+          courseId: copy.id,
+          title: topic.title,
+          description: topic.description,
+          position: topic.position,
+          isPublished: topic.isPublished,
+          // Duties come across: the people who wrote v1's material are the
+          // obvious people to revise it, and clearing them would make the lead
+          // hand out the same work twice.
+          materialTrainerId: topic.materialTrainerId,
+          quizTrainerId: topic.quizTrainerId,
+        },
+      });
+
+      if (topic.materials.length > 0) {
+        await tx.material.createMany({
+          data: topic.materials.map((material) => ({
+            topicId: newTopic.id,
+            type: material.type,
+            title: material.title,
+            body: material.body,
+            // The same storage key, deliberately — copying the file itself
+            // would double the storage for two identical PDFs. Deleting a
+            // material now checks whether another still points at the file
+            // before removing it; see materials.routes.
+            fileUrl: material.fileUrl,
+            originalFilename: material.originalFilename,
+            mimeType: material.mimeType,
+            fileSizeBytes: material.fileSizeBytes,
+            position: material.position,
+          })),
+        });
+      }
+
+      if (topic.quiz) {
+        const newQuiz = await tx.quiz.create({
+          data: {
+            topicId: newTopic.id,
+            title: topic.quiz.title,
+            maxAttempts: topic.quiz.maxAttempts,
+            passPercentage: topic.quiz.passPercentage,
+            questionsPerAttempt: topic.quiz.questionsPerAttempt,
+            // Published separately, like the course: a copied quiz has not been
+            // reviewed yet.
+            isPublished: false,
+          },
+        });
+
+        for (const question of topic.quiz.questions) {
+          await tx.question.create({
+            data: {
+              quizId: newQuiz.id,
+              type: question.type,
+              prompt: question.prompt,
+              marks: question.marks,
+              position: question.position,
+              options: {
+                create: question.options.map((option) => ({
+                  label: option.label,
+                  isCorrect: option.isCorrect,
+                  position: option.position,
+                })),
+              },
+            },
+          });
+        }
+      }
+    }
+
+    if (source.projects.length > 0) {
+      await tx.project.createMany({
+        data: source.projects.map((project) => ({
+          courseId: copy.id,
+          position: project.position,
+          title: project.title,
+          brief: project.brief,
+          // Deadlines are per cohort, and this cohort has not started.
+          dueAt: null,
+        })),
+      });
+    }
+
+    return {
+      ...copy,
+      copied: {
+        topics: source.topics.length,
+        materials: source.topics.reduce((n, t) => n + t.materials.length, 0),
+        quizzes: source.topics.filter((t) => t.quiz).length,
+        projects: source.projects.length,
+      },
+    };
   });
 }

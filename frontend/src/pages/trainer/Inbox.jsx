@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Alert, Badge, Button, Card, Empty } from '../../components/ui';
 import SessionQueue from './SessionQueue';
 import ExtensionQueue from './ExtensionQueue';
+import DiscontinueQueue from './DiscontinueQueue';
 
 const formatDate = (value) =>
   new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -15,22 +16,25 @@ export default function Inbox() {
   const [requests, setRequests] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [extensions, setExtensions] = useState([]);
+  const [stopping, setStopping] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [joins, meetings, moreTime] = await Promise.all([
+      const [joins, meetings, moreTime, leaving] = await Promise.all([
         api('/allot/requests'),
-        // A trainer has no session or extension inbox; both endpoints answer
-        // with an empty one rather than a 403, so this needs no role test.
+        // Each of these answers with an empty queue rather than a 403 for
+        // anyone it does not concern, so none of them needs a role test here.
         api('/sessions/inbox'),
         api('/extensions/inbox'),
+        api('/discontinuations/inbox'),
       ]);
       setRequests(joins.requests);
       setSessions(meetings.sessions);
       setExtensions(moreTime.extensions);
+      setStopping(leaving.discontinuations);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -80,9 +84,9 @@ export default function Inbox() {
     <div>
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Inbox</h1>
-        {requests.length + sessions.length + extensions.length > 0 && (
+        {requests.length + sessions.length + extensions.length + stopping.length > 0 && (
           <Badge tone="amber">
-            {requests.length + sessions.length + extensions.length} waiting
+            {requests.length + sessions.length + extensions.length + stopping.length} waiting
           </Badge>
         )}
       </div>
@@ -107,6 +111,18 @@ export default function Inbox() {
         onError={setError}
       />
 
+      {/* Leaving comes first of the three: it is the only one where waiting
+          keeps somebody on a course they have already stopped doing, and the
+          only one their lead cannot resolve instead. */}
+      <DiscontinueQueue
+        discontinuations={stopping}
+        onChanged={async () => {
+          await load();
+          window.dispatchEvent(new Event('inbox-changed'));
+        }}
+        onError={setError}
+      />
+
       {/* After sessions, before joins. Somebody stuck needs you today; somebody
           asking for time needs you before their deadline; somebody at the door
           can wait a day without it costing them anything. */}
@@ -121,11 +137,12 @@ export default function Inbox() {
 
       {requests.length === 0 ? (
         sessions.length === 0 &&
-        extensions.length === 0 && (
+        extensions.length === 0 &&
+        stopping.length === 0 && (
           <div className="mt-6">
             <Empty>
-              Nothing waiting. Requests to join a course, for a session, or for more time appear
-              here.
+              Nothing waiting. Requests to join a course, for a session, for more time, or to stop
+              a course appear here.
             </Empty>
           </div>
         )

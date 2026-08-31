@@ -9,6 +9,10 @@ export const createCourseSchema = z.object({
     .max(20)
     .regex(/^[A-Z0-9-]+$/, 'Use letters, numbers and hyphens only'),
   title: z.string().trim().min(3).max(200),
+  // Which edition of the subject this is. Typed rather than derived, because a
+  // course brought in from elsewhere may already be at v3, and the code+version
+  // pair is what has to be unique.
+  version: z.number().int().min(1).max(99).optional(),
   // Nullable, not merely optional: an emptied box has to be able to clear the
   // field, while an omitted one means "leave it alone".
   description: z.string().trim().max(2000).nullable().optional(),
@@ -22,7 +26,7 @@ export const createCourseSchema = z.object({
 
 // Trainers may not rename a course's code — it identifies the course to
 // everyone and is referenced outside the system.
-export const updateCourseSchema = createCourseSchema.partial().omit({ code: true });
+export const updateCourseSchema = createCourseSchema.partial().omit({ code: true, version: true });
 
 /** Admins may additionally change the code. */
 export const updateCourseAdminSchema = createCourseSchema.partial();

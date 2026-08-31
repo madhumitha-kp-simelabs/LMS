@@ -23,20 +23,15 @@ router.use(requireAuth);
  */
 
 const askSchema = z.object({
-  days: z
-    .number()
-    .int()
-    .min(1, 'Ask for at least a day')
-    .max(90, 'Ask for at most 90 days — anything longer is a conversation, not a form'),
+  requestedUntil: z.coerce.date({ message: 'Pick the date you need until' }),
   reason: z.string().trim().min(10, 'Say why you need the time').max(1000),
 });
 
 const answerSchema = z
   .object({
     status: z.enum(['approved', 'declined']),
-    // The lead may grant fewer days than were asked for; omitting it grants
-    // exactly what was requested.
-    grantedDays: z.number().int().min(1).max(90).nullable().optional(),
+    // Omitting it grants exactly the date requested, which is the common case.
+    grantedUntil: z.coerce.date().nullable().optional(),
     response: z.string().trim().max(1000).or(z.literal('')).nullable().optional(),
   })
   .refine((input) => input.status !== 'declined' || Boolean(input.response), {
@@ -55,9 +50,9 @@ const include = {
 const shape = (row) => ({
   id: row.id,
   status: row.status,
-  days: row.days,
+  requestedUntil: row.requestedUntil,
   reason: row.reason,
-  grantedDays: row.grantedDays,
+  grantedUntil: row.grantedUntil,
   response: row.response,
   createdAt: row.createdAt,
   decidedAt: row.decidedAt,
@@ -106,6 +101,16 @@ router.post(
     }
     if (enrolment.completedAt) {
       throw new AppError(409, 'You have already finished that course');
+    }
+
+    // Asking to be given until a date you have already passed, or one before
+    // your current deadline, is not an extension — say so rather than recording
+    // a request that could only ever shorten the course.
+    if (input.requestedUntil <= enrolment.dueAt) {
+      throw new AppError(
+        422,
+        'Pick a date after your current deadline — that is what an extension is.',
+      );
     }
 
     const open = await prisma.extensionRequest.findFirst({
@@ -204,14 +209,15 @@ router.patch(
 
     await assertMayAnswer(req.user, request.courseId);
 
-    const granted = input.status === 'approved' ? (input.grantedDays ?? request.days) : null;
+    const granted =
+      input.status === 'approved' ? (input.grantedUntil ?? request.requestedUntil) : null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const answered = await tx.extensionRequest.update({
         where: { id: request.id },
         data: {
           status: input.status,
-          grantedDays: granted,
+          grantedUntil: granted,
           response: input.response?.trim() || null,
           decidedById: req.user.id,
           decidedAt: new Date(),
@@ -225,12 +231,18 @@ router.patch(
           select: { id: true, dueAt: true },
         });
 
-        // Extends from the deadline as it stands, not from today — a request
-        // answered a week late must not quietly cost the candidate that week.
-        if (enrolment?.dueAt) {
+        /**
+         * The deadline becomes the agreed date outright.
+         *
+         * Simpler than the old arithmetic and free of its bug: adding days to
+         * the standing deadline meant a request answered a week late silently
+         * landed a week later than either party had in mind. A date means the
+         * same thing whenever it is answered.
+         */
+        if (enrolment) {
           await tx.enrollment.update({
             where: { id: enrolment.id },
-            data: { dueAt: new Date(enrolment.dueAt.getTime() + granted * 86400000) },
+            data: { dueAt: granted },
           });
         }
       }

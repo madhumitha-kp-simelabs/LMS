@@ -11,6 +11,8 @@ import progressRoutes from './modules/progress/progress.routes.js';
 import teamRoutes from './modules/teams/teams.routes.js';
 import sessionRoutes from './modules/sessions/sessions.routes.js';
 import extensionRoutes from './modules/extensions/extensions.routes.js';
+import notificationRoutes from './modules/notifications/notifications.routes.js';
+import discontinuationRoutes from './modules/discontinuations/discontinuations.routes.js';
 import materialRoutes from './modules/materials/materials.routes.js';
 import assignmentRoutes from './modules/assignments/assignments.routes.js';
 import quizRoutes from './modules/quizzes/quizzes.routes.js';
@@ -34,6 +36,8 @@ export function createApp() {
   app.use('/api/teams', teamRoutes);
   app.use('/api/sessions', sessionRoutes);
   app.use('/api/extensions', extensionRoutes);
+  app.use('/api/notifications', notificationRoutes);
+  app.use('/api/discontinuations', discontinuationRoutes);
   app.use('/api/content', materialRoutes);
   app.use('/api/allot', assignmentRoutes);
   app.use('/api/quizzes', quizRoutes);

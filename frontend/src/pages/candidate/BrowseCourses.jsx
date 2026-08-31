@@ -119,7 +119,12 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
     <Card accent={accent} className="flex h-full flex-col">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-base font-semibold tracking-wide text-indigo-600">{course.code}</p>
+          <p className="flex items-baseline gap-1.5">
+            <span className="text-base font-semibold tracking-wide text-indigo-600">
+              {course.code}
+            </span>
+            <span className="text-xs text-slate-400">v{course.version}</span>
+          </p>
           <h2 className="mt-0.5 font-semibold text-slate-900">{course.title}</h2>
         </div>
         <span className="flex shrink-0 flex-wrap justify-end gap-1.5">

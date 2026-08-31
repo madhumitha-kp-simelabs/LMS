@@ -9,6 +9,12 @@ const formatDate = (value) =>
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+const asDateInput = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '');
+
+/** The day after a date, as the earliest an extension could sensibly ask for. */
+const dayAfter = (value) =>
+  asDateInput(new Date(new Date(value).getTime() + 86400000));
+
 /** Whole days from now until then; negative once it is behind you. */
 const daysUntil = (value) =>
   Math.ceil((new Date(value).getTime() - Date.now()) / 86400000);
@@ -20,11 +26,18 @@ const daysUntil = (value) =>
  * The deadline is theirs rather than the course's — two people who started a
  * five-week course a fortnight apart are due a fortnight apart — which is why
  * everything here reads off their enrolment and not off the course.
+ *
+ * `compact` drops the card and the heading for the version that sits beside the
+ * course in the sidebar. Same component either way, because the rules about
+ * when you may pause, extend, or neither are fiddly enough that having them
+ * written twice would guarantee the two disagreeing.
  */
-export default function CourseSchedule({ course, onChanged }) {
+export default function CourseSchedule({ course, onChanged, compact = false }) {
   const [extensions, setExtensions] = useState([]);
   const [asking, setAsking] = useState(false);
-  const [form, setForm] = useState({ days: '7', reason: '' });
+  // Seeded a week past the current deadline: a starting point to adjust beats
+  // an empty box, and a week is the commonest ask.
+  const [form, setForm] = useState({ until: '', reason: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -61,11 +74,11 @@ export default function CourseSchedule({ course, onChanged }) {
     const sent = await run(() =>
       api(`/extensions/courses/${course.id}`, {
         method: 'POST',
-        body: { days: Number(form.days), reason: form.reason },
+        body: { requestedUntil: form.until, reason: form.reason },
       }),
     );
     if (sent) {
-      setForm({ days: '7', reason: '' });
+      setForm({ until: '', reason: '' });
       setAsking(false);
     }
   }
@@ -89,12 +102,27 @@ export default function CourseSchedule({ course, onChanged }) {
           ? { tone: 'amber', text: left === 0 ? 'Due today' : `${plural(left, 'day')} left` }
           : { tone: 'indigo', text: `${plural(left, 'day')} left` };
 
+  const Shell = compact ? 'div' : Card;
+  const shellProps = compact
+    ? { className: 'mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5' }
+    : { accent: standing.tone === 'rose' ? 'rose' : 'sky', className: 'mt-4' };
+
   return (
-    <Card accent={standing.tone === 'rose' ? 'rose' : 'sky'} className="mt-4">
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+    <Shell {...shellProps}>
+      <div
+        className={
+          compact
+            ? 'space-y-2'
+            : 'flex flex-wrap items-start justify-between gap-x-4 gap-y-2'
+        }
+      >
         <div>
-          <h3 className="text-lg font-semibold text-slate-900">Your schedule</h3>
-          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+          {!compact && <h3 className="text-lg font-semibold text-slate-900">Your schedule</h3>}
+          <p
+            className={`flex flex-wrap items-center gap-2 ${
+              compact ? 'text-xs text-slate-500' : 'mt-1 text-sm text-slate-500'
+            }`}
+          >
             <span>Due {formatDate(course.dueAt)}</span>
             <Badge tone={standing.tone}>{standing.text}</Badge>
           </p>
@@ -128,7 +156,17 @@ export default function CourseSchedule({ course, onChanged }) {
             )}
 
             {!open && !asking && !paused && (
-              <Button variant="secondary" size="sm" onClick={() => setAsking(true)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setForm({
+                    until: asDateInput(new Date(new Date(course.dueAt).getTime() + 7 * 86400000)),
+                    reason: '',
+                  });
+                  setAsking(true);
+                }}
+              >
                 Ask for more time
               </Button>
             )}
@@ -136,7 +174,7 @@ export default function CourseSchedule({ course, onChanged }) {
         )}
       </div>
 
-      <div className="mt-3 space-y-3">
+      <div className={compact ? 'mt-2 space-y-2' : 'mt-3 space-y-3'}>
         <Alert>{error}</Alert>
 
         {paused && (
@@ -152,7 +190,7 @@ export default function CourseSchedule({ course, onChanged }) {
               <span className="flex items-center gap-2">
                 <Badge tone="amber">Waiting</Badge>
                 <span className="text-sm text-slate-700">
-                  asked for {plural(open.days, 'day')} on {formatDate(open.createdAt)}
+                  asked until {formatDate(open.requestedUntil)} on {formatDate(open.createdAt)}
                 </span>
               </span>
               <button
@@ -169,15 +207,16 @@ export default function CourseSchedule({ course, onChanged }) {
 
         {asking && (
           <form onSubmit={ask} className="space-y-3">
-            <div className="w-40">
+            <div className="w-52">
               <Input
-                label="Extra days"
-                type="number"
-                min={1}
-                max={90}
+                label="I need until"
+                type="date"
                 autoFocus
-                value={form.days}
-                onChange={(event) => setForm({ ...form, days: event.target.value })}
+                // Anything on or before the current deadline would shorten the
+                // course, not extend it; the server refuses it either way.
+                min={dayAfter(course.dueAt)}
+                value={form.until}
+                onChange={(event) => setForm({ ...form, until: event.target.value })}
               />
             </div>
 
@@ -191,7 +230,11 @@ export default function CourseSchedule({ course, onChanged }) {
             />
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="submit" size="sm" disabled={busy || form.reason.trim().length < 10}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={busy || !form.until || form.reason.trim().length < 10}
+              >
                 {busy ? 'Sending…' : 'Send request'}
               </Button>
               <Button
@@ -222,13 +265,19 @@ export default function CourseSchedule({ course, onChanged }) {
                     <div className="flex flex-wrap items-center gap-2">
                       {extension.status === 'approved' ? (
                         <Badge tone="green">
-                          {plural(extension.grantedDays, 'day')} granted
-                          {/* Said only when it differs — otherwise it is noise. */}
-                          {extension.grantedDays !== extension.days && ` of ${extension.days}`}
+                          Until {formatDate(extension.grantedUntil)}
                         </Badge>
                       ) : (
                         <Badge tone="rose">Declined</Badge>
                       )}
+                      {/* Said only when the lead gave a different date from the
+                          one asked for — otherwise it is noise. */}
+                      {extension.status === 'approved' &&
+                        extension.grantedUntil !== extension.requestedUntil && (
+                          <span className="text-xs text-slate-500">
+                            asked until {formatDate(extension.requestedUntil)}
+                          </span>
+                        )}
                       <span className="text-xs text-slate-500">
                         {formatDate(extension.decidedAt)}
                       </span>
@@ -245,6 +294,6 @@ export default function CourseSchedule({ course, onChanged }) {
           </details>
         )}
       </div>
-    </Card>
+    </Shell>
   );
 }
