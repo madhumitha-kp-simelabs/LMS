@@ -188,7 +188,10 @@ export async function getCourse(user, courseId) {
         include: {
           materialTrainer: { select: { id: true, fullName: true } },
           quizTrainer: { select: { id: true, fullName: true } },
-          materials: { orderBy: { position: 'asc' } },
+          materials: {
+            orderBy: { position: 'asc' },
+            include: { uploadedBy: { select: { id: true, fullName: true } } },
+          },
           quiz: {
             select: {
               id: true,
@@ -523,8 +526,52 @@ export async function updateTopic(user, topicId, data) {
   // The topic's own record — title, blurb, publish state — is the lead's. Now
   // that the work is split in two, neither trainer owns the topic itself; they
   // own the material or the quiz hanging off it.
-  await assertTopicLead(user, topicId);
-  return prisma.topic.update({ where: { id: topicId }, data });
+  const before = await assertTopicLead(user, topicId);
+  const topic = await prisma.topic.update({ where: { id: topicId }, data });
+
+  /**
+   * Publishing a topic hands it to everybody already on the course.
+   *
+   * Enrolment is the decision about who is taught this course; allotting was
+   * meant to be about staging the material, not about admission. But a topic
+   * published after somebody enrolled reached nobody until a lead went back and
+   * allotted it by hand — so a candidate could be enrolled, see the course in
+   * Browse, and find nothing under My learning, because that list is built from
+   * allotments rather than enrolments.
+   *
+   * Only on the transition into published, and `skipDuplicates` so a lead who
+   * unpublishes and republishes does not trip over the rows already there.
+   *
+   * Candidates who have moved to a later version or stopped the course are left
+   * out: they are not on this edition any more, and handing them new material
+   * would pull them back onto something they have left.
+   */
+  let allotted = 0;
+  if (data.isPublished === true && !before.isPublished) {
+    const enrolled = await prisma.enrollment.findMany({
+      where: {
+        courseId: topic.courseId,
+        status: 'active',
+        supersededAt: null,
+        discontinuedAt: null,
+      },
+      select: { userId: true },
+    });
+
+    if (enrolled.length > 0) {
+      const { count } = await prisma.topicAssignment.createMany({
+        data: enrolled.map(({ userId }) => ({
+          userId,
+          topicId: topic.id,
+          assignedBy: user.id,
+        })),
+        skipDuplicates: true,
+      });
+      allotted = count;
+    }
+  }
+
+  return { ...topic, allotted };
 }
 
 export async function deleteTopic(user, topicId) {
@@ -610,7 +657,10 @@ export async function duplicateCourse(user, courseId) {
       topics: {
         orderBy: { position: 'asc' },
         include: {
-          materials: { orderBy: { position: 'asc' } },
+          materials: {
+            orderBy: { position: 'asc' },
+            include: { uploadedBy: { select: { id: true, fullName: true } } },
+          },
           quiz: { include: { questions: { include: { options: true } } } },
         },
       },
@@ -680,6 +730,7 @@ export async function duplicateCourse(user, courseId) {
             mimeType: material.mimeType,
             fileSizeBytes: material.fileSizeBytes,
             position: material.position,
+            uploadedById: material.uploadedById,
           })),
         });
       }

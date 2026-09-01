@@ -17,6 +17,11 @@ import {
   formatBytes,
 } from '../../components/ui';
 
+const formatDate = (value) =>
+  value
+    ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
+
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function CourseDetail() {
@@ -940,6 +945,26 @@ function MaterialsSection({ topic, canWrite, onChanged, onError }) {
                 </div>
                 <p className="mt-0.5 truncate text-xs text-slate-500">
                   {material.originalFilename} · {formatBytes(material.fileSizeBytes)}
+                </p>
+                {/* Always printed, even when the answer is "we do not know".
+                    Files uploaded before this was recorded have no author, and
+                    leaving the line off made the whole thing look missing
+                    rather than empty — which is a worse kind of wrong. */}
+                <p className="mt-0.5 truncate text-xs">
+                  {material.uploadedBy ? (
+                    <span className="text-slate-500">
+                      Uploaded by{' '}
+                      <span className="font-medium text-slate-700">
+                        {material.uploadedBy.fullName}
+                      </span>
+                      {material.createdAt && ` · ${formatDate(material.createdAt)}`}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">
+                      Uploader not recorded
+                      {material.createdAt && ` · ${formatDate(material.createdAt)}`}
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">

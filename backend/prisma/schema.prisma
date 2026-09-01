@@ -115,6 +115,7 @@ model User {
   // everywhere the concept is talked about.
   coursesOwned     Course[]           @relation("CourseOwner")
   courseTeams      CourseTrainer[]    @relation("TrainerOnCourse")
+  materialsAdded   Material[]         @relation("MaterialUploader")
   materialDuties   Topic[]            @relation("TopicMaterialDuty")
   quizDuties       Topic[]            @relation("TopicQuizDuty")
   enrollments      Enrollment[]
@@ -392,10 +393,16 @@ model Material {
   mimeType         String?
   fileSizeBytes    BigInt?
   position         Int
+  // Who put it there. Nullable because material that predates this column has
+  // no answer, and inventing one would be worse than admitting it — and
+  // SetNull rather than Restrict, so the record of the file outlives the
+  // account of whoever uploaded it.
+  uploadedById     String?
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  topic      Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  uploadedBy User? @relation("MaterialUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
 
   @@unique([topicId, position])
   @@index([topicId])

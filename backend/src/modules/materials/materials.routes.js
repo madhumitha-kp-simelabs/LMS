@@ -45,7 +45,9 @@ router.post(
         mimeType: req.file.mimetype,
         fileSizeBytes: BigInt(req.file.size),
         position: (last?.position ?? 0) + 1,
+        uploadedById: req.user.id,
       },
+      include: { uploadedBy: { select: { id: true, fullName: true } } },
     });
 
     res.status(201).json({ material });

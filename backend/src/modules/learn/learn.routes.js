@@ -351,11 +351,53 @@ router.get(
       }),
       prisma.enrollment.findMany({
         where: { userId: req.user.id },
-        select: { courseId: true, status: true },
+        select: {
+          courseId: true,
+          status: true,
+          supersededAt: true,
+          discontinuedAt: true,
+        },
       }),
     ]);
 
-    const statusByCourse = new Map(enrollments.map((e) => [e.courseId, e.status]));
+    /**
+     * Where the reader stands on each course.
+     *
+     * `status` alone is not enough: it stays 'active' on an enrolment somebody
+     * has moved off or stopped, so the catalogue was telling them they were
+     * enrolled on a course they had left, and offering to open topics that no
+     * longer appear under My learning.
+     *
+     * 'moved' and 'stopped' are their own answers rather than being folded into
+     * 'none'. They are not people who have never been on the course, and a card
+     * that said "Ask to join" would invite them to undo a decision somebody
+     * already made deliberately.
+     */
+    const standingOf = (enrolment) => {
+      if (enrolment.supersededAt) return 'moved';
+      if (enrolment.discontinuedAt) return 'stopped';
+      return enrolment.status;
+    };
+
+    const statusByCourse = new Map(enrollments.map((e) => [e.courseId, standingOf(e)]));
+
+    /**
+     * The newest published edition of each subject.
+     *
+     * Somebody who is not on any version of a course has no reason to join an
+     * old one — the current material is the point. So the catalogue says which
+     * edition is current, and the card offers to join that one only.
+     *
+     * Presentation and a guard, not a retirement: the older edition stays
+     * published and stays listed, because the people part-way through it are
+     * still on it and it is still where their work lives. What changes is only
+     * what a newcomer is offered.
+     */
+    const newest = new Map();
+    for (const course of courses) {
+      const seen = newest.get(course.code) ?? 0;
+      if (course.version > seen) newest.set(course.code, course.version);
+    }
 
     // How many topics the candidate can actually open, so an approved course
     // that has not been allotted yet is honest about showing nothing.
@@ -392,8 +434,11 @@ router.get(
         // ever both: you cannot be enrolled on a course you run.
         staff:
           course.ownerId === req.user.id ? 'lead' : course.team.length > 0 ? 'trainer' : null,
-        // 'none' | 'pending' | 'active'
+        // 'none' | 'pending' | 'active' | 'moved' | 'stopped'
         subscription: statusByCourse.get(course.id) ?? 'none',
+        // The version that has replaced this one, or null when this is current.
+        newerVersion:
+          newest.get(course.code) > course.version ? newest.get(course.code) : null,
         allottedTopics: allottedCount.get(course.id) ?? 0,
       })),
     });
@@ -527,15 +572,42 @@ router.post(
     // requester is the one who reads.
     await assertNotCourseStaff(course.id, [req.user.id]);
 
+    /**
+     * Joining a superseded edition is refused for somebody new.
+     *
+     * The UI does not offer it, but the endpoint is reachable, and a request
+     * that would put a candidate onto material the lead has already replaced is
+     * one nobody wants approved. Candidates already on the old edition are
+     * untouched — this only governs joining it in the first place.
+     */
+    const newer = await prisma.course.findFirst({
+      where: { code: course.code, version: { gt: course.version }, isPublished: true },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    });
+    if (newer) {
+      throw new AppError(
+        409,
+        `${course.code} version ${newer.version} has replaced this one — ask to join that instead`,
+      );
+    }
+
     const existing = await prisma.enrollment.findUnique({
       where: { userId_courseId: { userId: req.user.id, courseId: course.id } },
     });
     if (existing) {
+      // The UI no longer offers to join a course somebody has left, but the
+      // endpoint is still reachable — and "you are already enrolled" is the
+      // wrong sentence for a course they moved off or stopped.
       throw new AppError(
         409,
-        existing.status === 'pending'
-          ? 'You have already asked to join this course'
-          : 'You are already enrolled in this course',
+        existing.supersededAt
+          ? 'You moved to a later version of this course'
+          : existing.discontinuedAt
+            ? 'You stopped this course — ask an administrator to put you back on it'
+            : existing.status === 'pending'
+              ? 'You have already asked to join this course'
+              : 'You are already enrolled in this course',
       );
     }
 

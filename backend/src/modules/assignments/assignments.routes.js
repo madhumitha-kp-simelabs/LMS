@@ -204,8 +204,20 @@ router.post(
 
     await assertNotCourseStaff(req.params.courseId, [req.params.userId]);
 
+    /**
+     * Published topics only, and the rest arrive as they are published.
+     *
+     * This used to hand over every topic on the course, drafts included, which
+     * put half-written material in front of the candidate the moment they were
+     * approved. Publishing a topic now allots it to everybody already enrolled,
+     * so nothing is lost by waiting — and the two paths onto a course agree
+     * about what being on it gets you.
+     */
     const topics = allotAllTopics
-      ? await prisma.topic.findMany({ where: { courseId: req.params.courseId }, select: { id: true } })
+      ? await prisma.topic.findMany({
+          where: { courseId: req.params.courseId, isPublished: true },
+          select: { id: true },
+        })
       : [];
 
     await prisma.$transaction([

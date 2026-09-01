@@ -113,10 +113,35 @@ export default function BrowseCourses() {
 function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
   const { subscription, allottedTopics, topicCount } = course;
 
+  /**
+   * A course they have moved off or stopped.
+   *
+   * Greyed rather than hidden: seeing the old edition sitting there is what
+   * explains why the new one has their attention, and their results on it are
+   * still reachable. But it carries no accent and no action — the point of
+   * dimming it is that nothing here is theirs to do any more.
+   */
+  const left = subscription === 'moved' || subscription === 'stopped';
+
+  /**
+   * An older edition, to somebody who is not on it.
+   *
+   * Dimmed and not joinable: there is no reason to start on material a lead has
+   * already replaced. Anyone actually on it — mid-course, awaiting approval, or
+   * staff — sees the card as normal, because for them it is still the course
+   * they are on rather than a stale option.
+   */
+  const superseded = course.newerVersion != null && subscription === 'none' && !course.staff;
+
+  const dim = left || superseded;
+
   const accent = { none: 'sky', pending: 'amber', active: 'emerald' }[subscription];
 
   return (
-    <Card accent={accent} className="flex h-full flex-col">
+    <Card
+      accent={accent}
+      className={`flex h-full flex-col ${dim ? 'bg-slate-50/70 opacity-75' : ''}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="flex items-baseline gap-1.5">
@@ -135,6 +160,12 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
           {course.staff === 'trainer' && <Badge tone="sky">On the team</Badge>}
           {subscription === 'active' && <Badge tone="green">Enrolled</Badge>}
           {subscription === 'pending' && <Badge tone="amber">Requested</Badge>}
+          {/* Named, not just dimmed. A grey card with no explanation reads as
+              unavailable or broken, and somebody would reasonably wonder why
+              they cannot open a course they think they are on. */}
+          {subscription === 'moved' && <Badge tone="slate">Moved to a later version</Badge>}
+          {subscription === 'stopped' && <Badge tone="slate">You stopped this</Badge>}
+          {superseded && <Badge tone="slate">Replaced by v{course.newerVersion}</Badge>}
         </span>
       </div>
 
@@ -165,11 +196,18 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
           </Link>
         ) : (
           <>
-        {subscription === 'none' && (
-          <Button onClick={onSubscribe} disabled={busy}>
-            {busy ? 'Sending…' : 'Ask to join'}
-          </Button>
-        )}
+        {subscription === 'none' &&
+          (superseded ? (
+            // Says where to go instead. A dimmed card with no button and no
+            // sentence reads as something broken rather than something old.
+            <p className="text-xs text-slate-500">
+              An older edition. Version {course.newerVersion} is the current one — join that.
+            </p>
+          ) : (
+            <Button onClick={onSubscribe} disabled={busy}>
+              {busy ? 'Sending…' : 'Ask to join'}
+            </Button>
+          ))}
 
         {subscription === 'pending' && (
           <div>
@@ -194,6 +232,14 @@ function CourseCard({ course, busy, onSubscribe, onWithdraw }) {
               You&apos;re enrolled. Your trainer hasn&apos;t shared any topics with you yet.
             </p>
           ))}
+
+        {/* My progress, not My courses: this course is no longer listed there,
+            so the old "Open topics" button led to a page it was missing from. */}
+        {left && (
+          <Link to="/my-progress" className="text-sm text-indigo-600 hover:text-indigo-700">
+            See what you did here →
+          </Link>
+        )}
           </>
         )}
       </div>
