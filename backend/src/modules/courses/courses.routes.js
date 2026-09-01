@@ -10,6 +10,7 @@ import {
 } from './courses.schema.js';
 import * as courses from './courses.service.js';
 import { courseProgress } from './progress.service.js';
+import { pauseEnrolment, resumeEnrolment } from './schedule.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -46,11 +47,43 @@ router.patch(
   }),
 );
 
+/**
+ * Pausing a candidate's course on their behalf, and starting it again.
+ *
+ * The lead's, because they are the ones who find out: a candidate pulled onto a
+ * release or away on leave stops logging in, and waiting for them to pause it
+ * themselves is waiting for the person who has gone quiet. An admin can do it
+ * too — assertCourseLead admits them — but a team trainer cannot, since moving
+ * somebody's deadline is not part of writing a topic.
+ */
+router.post(
+  '/:courseId/candidates/:userId/pause',
+  handle(async (req, res) => {
+    await courses.assertCourseLead(req.user, req.params.courseId);
+    res.json(await pauseEnrolment(req.params.userId, req.params.courseId));
+  }),
+);
+
+router.post(
+  '/:courseId/candidates/:userId/resume',
+  handle(async (req, res) => {
+    await courses.assertCourseLead(req.user, req.params.courseId);
+    res.json({ resumed: true, ...(await resumeEnrolment(req.params.userId, req.params.courseId)) });
+  }),
+);
+
+/** What deleting this course would take with it, for the screen to warn first. */
+router.get(
+  '/:courseId/impact',
+  handle(async (req, res) => {
+    res.json(await courses.courseDeletionImpact(req.user, req.params.courseId));
+  }),
+);
+
 router.delete(
   '/:courseId',
   handle(async (req, res) => {
-    await courses.deleteCourse(req.user, req.params.courseId);
-    res.status(204).end();
+    res.json(await courses.deleteCourse(req.user, req.params.courseId));
   }),
 );
 

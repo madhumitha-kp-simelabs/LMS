@@ -161,15 +161,18 @@ function CourseTable({ courses }) {
         { label: 'Lead' },
         { label: 'Topics', align: 'right' },
         { label: 'Quizzes', align: 'right' },
-        { label: 'Average', align: 'right' },
         { label: 'Progress' },
+        { label: 'Due' },
       ]}
     >
       {courses.map((course) => (
         <Row key={course.id}>
           <Cell>
-            <span className="block text-xs font-semibold tracking-wide text-indigo-600">
-              {course.code}
+            <span className="flex items-baseline gap-1.5">
+              <span className="text-xs font-semibold tracking-wide text-indigo-600">
+                {course.code}
+              </span>
+              <span className="text-xs text-slate-400">v{course.version}</span>
             </span>
             <span className="font-medium text-slate-900">{course.title}</span>
             {course.status === 'pending' && (
@@ -186,21 +189,28 @@ function CourseTable({ courses }) {
           <Cell align="right" className="text-slate-700">
             {course.quizzesDone}
           </Cell>
-          <Cell align="right">
-            {course.averageScore === null ? (
-              <span className="text-slate-400">—</span>
-            ) : (
-              <Badge tone={toneForScore(course.averageScore)}>{course.averageScore}%</Badge>
-            )}
-          </Cell>
           <Cell className="whitespace-nowrap text-xs text-slate-500">
+            {/* Three ways an enrolment can already have ended, and they are not
+                the same thing: finished it, moved to a later edition, or
+                stopped. A record that showed only "not started" for the last
+                two would misrepresent what happened. */}
             {course.completedAt ? (
               <Badge tone="green">Finished {formatDate(course.completedAt)}</Badge>
+            ) : course.discontinuedAt ? (
+              <Badge tone="rose">Stopped {formatDate(course.discontinuedAt)}</Badge>
+            ) : course.supersededAt ? (
+              <Badge tone="slate">Moved on {formatDate(course.supersededAt)}</Badge>
+            ) : course.pausedAt ? (
+              <Badge tone="amber">Paused {formatDate(course.pausedAt)}</Badge>
             ) : course.startedAt ? (
               <>Started {formatDate(course.startedAt)}</>
             ) : (
               <span className="text-slate-400">Not started</span>
             )}
+          </Cell>
+
+          <Cell className="whitespace-nowrap text-xs">
+            <DueDate course={course} />
           </Cell>
         </Row>
       ))}
@@ -255,5 +265,45 @@ function AttemptTable({ attempts }) {
         </Row>
       ))}
     </Table>
+  );
+}
+
+/**
+ * When this candidate is due to finish, and whether that still matters.
+ *
+ * A deadline on a course somebody has already finished, stopped, or moved off
+ * is history, so it is shown plainly. A live one is worth colouring: overdue in
+ * rose, close in amber. "Started 27 Aug" on its own says nothing about whether
+ * somebody is late, which is usually the question being asked of this page.
+ */
+function DueDate({ course }) {
+  if (!course.dueAt) {
+    return (
+      <span className="text-slate-400" title="This course has no duration set">
+        —
+      </span>
+    );
+  }
+
+  const settled = course.completedAt || course.discontinuedAt || course.supersededAt;
+  const days = Math.ceil((new Date(course.dueAt).getTime() - Date.now()) / 86400000);
+
+  if (settled) {
+    return <span className="text-slate-400">{formatDate(course.dueAt)}</span>;
+  }
+
+  const tone = days < 0 ? 'text-rose-700 font-medium' : days <= 7 ? 'text-amber-700' : 'text-slate-600';
+
+  return (
+    <span className={tone}>
+      {formatDate(course.dueAt)}
+      <span className="ml-1 text-slate-400">
+        {days < 0
+          ? `· ${-days}d over`
+          : days === 0
+            ? '· today'
+            : `· ${days}d left`}
+      </span>
+    </span>
   );
 }

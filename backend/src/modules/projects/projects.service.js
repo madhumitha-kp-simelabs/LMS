@@ -144,9 +144,55 @@ export async function updateProject(user, projectId, data) {
   return prisma.project.update({ where: { id: projectId }, data });
 }
 
+/**
+ * Removing a project, and the work handed in against it.
+ *
+ * The lead who wrote it, or an administrator. Writing a brief stays the lead's
+ * alone, but clearing one out is housekeeping — an admin who cannot remove a
+ * project created by mistake has to go and ask the person who made the mistake.
+ *
+ * Deleting cascades to the allotments, which is the whole risk: it destroys
+ * every candidate's submission for this project, including files they uploaded.
+ * The count goes back to the caller so the screen can say what it is about to
+ * take with it, and the files are removed from storage rather than left behind
+ * as rows nobody can reach any more.
+ */
 export async function deleteProject(user, projectId) {
-  await assertProjectLead(user, projectId);
+  const project = await load(projectId);
+
+  if (user.role !== 'admin') await assertIsTheLead(user, project.courseId);
+
+  const allotments = await prisma.projectAllotment.findMany({
+    where: { projectId },
+    select: { fileUrl: true },
+  });
+
   await prisma.project.delete({ where: { id: projectId } });
+
+  // After the row is gone, so a storage failure cannot leave a project that
+  // half-exists. An orphaned file is a tidiness problem; a project whose
+  // deletion half-happened is a correctness one.
+  for (const { fileUrl } of allotments) {
+    if (fileUrl) await deleteFile(fileUrl).catch(() => {});
+  }
+
+  return { allotments: allotments.length };
+}
+
+/** What deleting would destroy, so a screen can warn before it asks. */
+export async function deletionImpact(user, projectId) {
+  const project = await load(projectId);
+  if (user.role !== 'admin') await assertIsTheLead(user, project.courseId);
+
+  const allotments = await prisma.projectAllotment.findMany({
+    where: { projectId },
+    select: { submittedAt: true },
+  });
+
+  return {
+    allotted: allotments.length,
+    handedIn: allotments.filter((a) => a.submittedAt).length,
+  };
 }
 
 /**

@@ -6,6 +6,7 @@ import { Alert, Badge, Button, Card, Empty } from '../../components/ui';
 import SessionQueue from './SessionQueue';
 import ExtensionQueue from './ExtensionQueue';
 import DiscontinueQueue from './DiscontinueQueue';
+import OverdueQueue from './OverdueQueue';
 
 const formatDate = (value) =>
   new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -17,24 +18,27 @@ export default function Inbox() {
   const [sessions, setSessions] = useState([]);
   const [extensions, setExtensions] = useState([]);
   const [stopping, setStopping] = useState([]);
+  const [overdue, setOverdue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busyKey, setBusyKey] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [joins, meetings, moreTime, leaving] = await Promise.all([
+      const [joins, meetings, moreTime, leaving, late] = await Promise.all([
         api('/allot/requests'),
         // Each of these answers with an empty queue rather than a 403 for
         // anyone it does not concern, so none of them needs a role test here.
         api('/sessions/inbox'),
         api('/extensions/inbox'),
         api('/discontinuations/inbox'),
+        api('/progress/overdue'),
       ]);
       setRequests(joins.requests);
       setSessions(meetings.sessions);
       setExtensions(moreTime.extensions);
       setStopping(leaving.discontinuations);
+      setOverdue(late.overdue);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -89,6 +93,9 @@ export default function Inbox() {
             {requests.length + sessions.length + extensions.length + stopping.length} waiting
           </Badge>
         )}
+        {/* Counted apart from "waiting": nobody is waiting on the lead to
+            answer this one, but it is the thing most likely to need them. */}
+        {overdue.length > 0 && <Badge tone="rose">{overdue.length} running late</Badge>}
       </div>
       <p className="mt-1 max-w-2xl text-sm text-slate-500">
         Candidates asking to join {user.role === 'admin' ? 'any course' : 'your courses'}, and
@@ -108,6 +115,14 @@ export default function Inbox() {
           await load();
           window.dispatchEvent(new Event('inbox-changed'));
         }}
+        onError={setError}
+      />
+
+      {/* Above every queue. The others are people waiting on an answer, which
+          can wait a day; somebody past their deadline is already losing time. */}
+      <OverdueQueue
+        overdue={overdue}
+        onChanged={load}
         onError={setError}
       />
 
@@ -138,11 +153,12 @@ export default function Inbox() {
       {requests.length === 0 ? (
         sessions.length === 0 &&
         extensions.length === 0 &&
-        stopping.length === 0 && (
+        stopping.length === 0 &&
+        overdue.length === 0 && (
           <div className="mt-6">
             <Empty>
-              Nothing waiting. Requests to join a course, for a session, for more time, or to stop
-              a course appear here.
+              Nothing waiting, and nobody running late. Requests to join a course, for a session,
+              for more time, or to stop a course appear here.
             </Empty>
           </div>
         )

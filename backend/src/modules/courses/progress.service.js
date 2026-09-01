@@ -193,6 +193,11 @@ export async function courseProgress(courseId) {
       enrolledAt: enrollment.enrolledAt,
       startedAt: enrollment.startedAt,
       completedAt: enrollment.completedAt,
+      // The schedule, so a lead can see the deadline and pause the clock from
+      // the same row they are reading the progress on.
+      dueAt: enrollment.dueAt,
+      pausedAt: enrollment.pausedAt,
+      pausedDays: enrollment.pausedDays,
       otherCourses: elsewhereByCandidate.get(enrollment.userId) ?? [],
       topicsAllotted: myTopics.length,
       quizzesAvailable: withQuiz.length,

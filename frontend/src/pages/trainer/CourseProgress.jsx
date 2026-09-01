@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Card, Empty, toneForScore } from '../../components/ui';
@@ -6,6 +6,7 @@ import CompletionSummary from './CompletionSummary';
 import CourseNav from './CourseNav';
 import AttemptReview from '../../components/AttemptReview';
 import OtherCourses from '../../components/OtherCourses';
+import PauseCandidate from '../../components/PauseCandidate';
 
 const formatDate = (value) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
@@ -18,6 +19,16 @@ export default function CourseProgress() {
   const [expanded, setExpanded] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [error, setError] = useState(null);
+
+  // Pausing a candidate moves their deadline, so the row has to be able to
+  // ask for the numbers again rather than showing yesterday's.
+  const reload = useCallback(
+    () =>
+      api(`/courses/${courseId}/progress`)
+        .then(setData)
+        .catch((err) => setError(err.message)),
+    [courseId],
+  );
 
   useEffect(() => {
     Promise.all([api(`/courses/${courseId}/progress`), api(`/courses/${courseId}`)])
@@ -125,6 +136,9 @@ export default function CourseProgress() {
                 onToggle={() => setExpanded(expanded === candidate.id ? null : candidate.id)}
                 removing={removing === candidate.id}
                 onRemove={() => remove(candidate)}
+                courseId={courseId}
+                onChanged={reload}
+                onError={setError}
               />
             ))}
           </div>
@@ -150,7 +164,7 @@ function Tile({ label, value, accent }) {
   );
 }
 
-function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
+function CandidateRow({ candidate, open, onToggle, onRemove, removing, courseId, onChanged, onError }) {
   // Which attempt is open, if any. Held here rather than on the page so
   // collapsing a candidate puts their answers away with them.
   const [reviewing, onReview] = useState(null);
@@ -204,6 +218,16 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing }) {
 
       {open && (
         <div className="border-t border-slate-200 px-6 py-5">
+          {/* The schedule first: whether somebody is behind is the frame you
+              read the rest of the row through. */}
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-2.5">
+            <PauseCandidate
+              courseId={courseId}
+              candidate={candidate}
+              onChanged={onChanged}
+              onError={onError}
+            />
+          </div>
           <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">

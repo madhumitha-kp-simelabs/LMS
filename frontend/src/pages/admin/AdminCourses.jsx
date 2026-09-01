@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { Alert, Badge, Button, Card, Empty, Input, Select, Textarea } from '../../components/ui';
 import { groupByCategory, toneForCategory, useCollapsedCategories } from '../../lib/categories';
 import CategoryHeading from '../../components/CategoryHeading';
+import DeleteCourse from './DeleteCourse';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -72,6 +73,14 @@ export default function AdminCourses() {
         }),
       `${code} v${Number(version) || 1} added. Allot it to a lead when you are ready.`,
     );
+
+  const removeCourse = async (course, files) => {
+    await load();
+    setNotice({
+      tone: 'indigo',
+      text: `${course.code} v${course.version} deleted${files > 0 ? `, along with ${files} stored file${files === 1 ? '' : 's'}` : ''}.`,
+    });
+  };
 
   /**
    * Copying a course into its next version.
@@ -182,6 +191,8 @@ export default function AdminCourses() {
               busy={busy}
               onSave={saveCourse}
               onDuplicate={duplicate}
+              onDeleted={removeCourse}
+              onError={(text) => setNotice({ tone: 'rose', text })}
             />
           </div>
         </section>
@@ -195,7 +206,8 @@ const Heading = () => (
     <h1 className="text-2xl font-semibold text-slate-900">Courses</h1>
     <p className="mt-1 text-sm text-slate-500">
       Add a course with its code and title. Allotting it to a lead is the next step, and their team
-      builds out the topics, material and quizzes from there.
+      builds out the topics, material and quizzes from there. Use “+ Version” on an existing course
+      to revise it as a new edition.
     </p>
   </div>
 );
@@ -267,8 +279,9 @@ function NewCourseForm({ busy, categories, onCreate }) {
       </form>
 
       <p className="mt-3 text-xs leading-relaxed text-slate-500">
-        Codes are unique and shown to candidates — letters, numbers and hyphens. Everything here can
-        be corrected later with Edit. The course starts as a draft, hidden until published.
+        The code names the subject and the version says which edition — PM-101 v1 and v2 are two
+        courses. Letters, numbers and hyphens; a code and version together must be unique.
+        Everything here can be corrected later with Edit, and the course starts as a draft.
       </p>
     </Card>
   );
@@ -445,7 +458,7 @@ function RenameRow({ category, busy, onSave, onCancel }) {
  * That is the trick that lets the catalogue be grouped and still be a table.
  */
 const GRID =
-  'grid grid-cols-[minmax(0,1fr)_150px_64px_92px_104px_150px] items-center gap-x-4';
+  'grid grid-cols-[minmax(0,1fr)_136px_58px_86px_96px_216px] items-center gap-x-3';
 
 /**
  * The catalogue, grouped by what each course is about.
@@ -456,7 +469,7 @@ const GRID =
  * content that never came. Empty categories are now a single quiet line at the
  * bottom, and each category that does hold something gets its own card.
  */
-function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate }) {
+function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate, onDeleted, onError }) {
   // One row at a time: two half-finished edits on screen is a way to save the
   // wrong one.
   const [editingId, setEditingId] = useState(null);
@@ -467,15 +480,33 @@ function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate }) {
   const groups = groupByCategory(courses, { all: categories });
   const unused = categories.filter((category) => category.courses === 0);
 
+  const anyOpen = groups.some((group) => folds.isOpen(group.category));
+
   return (
-    <div className="space-y-7">
-<div className="flex items-center justify-between gap-4">
-        {/* Labelled once, above everything, rather than repeated per card. The
-            labels head nothing once every section is folded, so they go too. */}
+    // Sections sit close together: folded, they are single rows, and spacing
+    // them as though they held content made a collapsed catalogue look like a
+    // page that had failed to load.
+    <div className="space-y-3">
+      <div className="flex items-center justify-end gap-4">
+        {/* Only offered when there is more than one section to act on. */}
+        {groups.length > 1 && (
+          <button
+            onClick={() =>
+              folds.allOpen ? folds.closeAll(groups.map((group) => group.category)) : folds.openAll()
+            }
+            className="shrink-0 text-xs font-medium text-indigo-600 transition hover:text-indigo-700"
+          >
+            {folds.allOpen ? 'Collapse all' : 'Expand all'}
+          </button>
+        )}
+      </div>
+
+      {/* Labelled once, above everything, rather than repeated per card — and
+          not rendered at all when there is nothing open for it to head. It used
+          to go invisible, which left a band of empty page above the sections. */}
+      {anyOpen && (
         <div
-          className={`${GRID} flex-1 px-5 text-[11px] font-semibold uppercase tracking-wide text-slate-400 ${
-            groups.some((group) => folds.isOpen(group.category)) ? '' : 'invisible'
-          }`}
+          className={`${GRID} px-5 text-[11px] font-semibold uppercase tracking-wide text-slate-400`}
         >
           <span>Course</span>
           <span>Lead</span>
@@ -484,27 +515,21 @@ function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate }) {
           <span>Status</span>
           <span />
         </div>
-
-        {/* Only offered when there is more than one section to act on. */}
-        {groups.length > 1 && (
-          <button
-            onClick={() =>
-              folds.allOpen ? folds.closeAll(groups.map((group) => group.category)) : folds.openAll()
-            }
-            className="shrink-0 text-xs text-indigo-600 underline transition hover:text-indigo-700"
-          >
-            {folds.allOpen ? 'Collapse all' : 'Expand all'}
-          </button>
-        )}
-      </div>
+      )}
 
       {groups.map((group) => (
-        <section key={group.category.id ?? 'none'}>
+        <section key={group.category.id ?? 'none'} className={folds.isOpen(group.category) ? 'pb-3' : ''}>
           <CategoryHeading
             category={group.category}
             count={group.courses.length}
             open={folds.isOpen(group.category)}
             onToggle={() => folds.toggle(group.category)}
+            // Enough to recognise what is in there without opening it. Capped,
+            // because a heading that wraps to three lines is not a heading.
+            preview={group.courses
+              .slice(0, 6)
+              .map((course) => `${course.code} v${course.version}`)
+              .join(' · ')}
           />
 
           {folds.isOpen(group.category) && (
@@ -529,6 +554,8 @@ function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate }) {
                       busy={busy}
                       onEdit={() => setEditingId(course.id)}
                       onDuplicate={() => onDuplicate(course)}
+                      onDeleted={onDeleted}
+                      onError={onError}
                     />
                   )}
                 </li>
@@ -555,7 +582,7 @@ function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate }) {
   );
 }
 
-function CourseRow({ course, busy, onEdit, onDuplicate }) {
+function CourseRow({ course, busy, onEdit, onDuplicate, onDeleted, onError }) {
   return (
     <div className={`${GRID} px-5 py-3.5 transition hover:bg-slate-50/70`}>
       <Link to={`/trainer/courses/${course.id}`} className="group min-w-0">
@@ -604,6 +631,7 @@ function CourseRow({ course, busy, onEdit, onDuplicate }) {
         >
           + Version
         </Button>
+        <DeleteCourse course={course} onDeleted={onDeleted} onError={onError} />
       </span>
     </div>
   );

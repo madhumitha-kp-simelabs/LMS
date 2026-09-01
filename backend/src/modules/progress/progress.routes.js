@@ -76,4 +76,72 @@ router.get(
   }),
 );
 
+/**
+ * Candidates who have run past their deadline, for the lead's inbox.
+ *
+ * Computed on request rather than written as notification rows when the date
+ * passes. Overdue is not an event, it is a condition: it stops being true the
+ * moment somebody finishes, is granted more time, or has their course paused,
+ * and a stored notice would sit in the inbox insisting otherwise. Deriving it
+ * also means no scheduled job — there is nothing in this application that runs
+ * on a clock, and adding one to send a message that can be worked out on the
+ * spot would be machinery for its own sake.
+ *
+ * Paused candidates are excluded: their clock is stopped, which is exactly the
+ * arrangement that says they are not late.
+ */
+router.get(
+  '/overdue',
+  handle(async (req, res) => {
+    const mine =
+      req.user.role === 'admin'
+        ? {}
+        : { OR: [{ ownerId: req.user.id }, { team: { some: { userId: req.user.id } } }] };
+
+    const rows = await prisma.enrollment.findMany({
+      where: {
+        status: 'active',
+        completedAt: null,
+        discontinuedAt: null,
+        supersededAt: null,
+        pausedAt: null,
+        dueAt: { not: null, lt: new Date() },
+        course: mine,
+      },
+      // Furthest past their date first — the person three weeks over needs
+      // attention before the one who slipped yesterday.
+      orderBy: { dueAt: 'asc' },
+      include: {
+        user: { select: { id: true, fullName: true, email: true } },
+        course: {
+          select: {
+            id: true,
+            code: true,
+            version: true,
+            title: true,
+            ownerId: true,
+          },
+        },
+      },
+    });
+
+    const now = Date.now();
+
+    res.json({
+      overdue: rows.map((row) => ({
+        id: `${row.courseId}:${row.userId}`,
+        candidate: row.user,
+        course: row.course,
+        // Whether the reader can do anything about it, or is only being told.
+        mine: row.course.ownerId === req.user.id,
+        dueAt: row.dueAt,
+        startedAt: row.startedAt,
+        pausedDays: row.pausedDays,
+        daysOver: Math.floor((now - row.dueAt.getTime()) / 86400000),
+      })),
+      count: rows.length,
+    });
+  }),
+);
+
 export default router;

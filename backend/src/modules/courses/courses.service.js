@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { AppError } from '../../middleware/error.js';
+import { deleteFile } from '../../lib/storage.js';
 import { announceNewVersion } from '../notifications/notify.js';
 
 
@@ -321,9 +322,90 @@ export async function updateCourse(user, courseId, data) {
   return updated;
 }
 
+/**
+ * What deleting a course would destroy.
+ *
+ * Deletion cascades all the way down — topics, material, quizzes, every
+ * attempt, every project and everything handed in against it, enrolments and
+ * feedback. That is a lot to take on the word of a button, so a screen can ask
+ * for this first and say it out loud.
+ */
+export async function courseDeletionImpact(user, courseId) {
+  await assertCourseLead(user, courseId);
+
+  const [course, candidates, topics, materials, attempts, projects, submissions] =
+    await Promise.all([
+      prisma.course.findUnique({
+        where: { id: courseId },
+        select: { code: true, version: true, title: true },
+      }),
+      prisma.enrollment.count({ where: { courseId } }),
+      prisma.topic.count({ where: { courseId } }),
+      prisma.material.count({ where: { topic: { courseId } } }),
+      prisma.attempt.count({ where: { quiz: { topic: { courseId } } } }),
+      prisma.project.count({ where: { courseId } }),
+      prisma.projectAllotment.count({
+        where: { project: { courseId }, submittedAt: { not: null } },
+      }),
+    ]);
+
+  if (!course) throw new AppError(404, 'Course not found');
+
+  return { ...course, candidates, topics, materials, attempts, projects, submissions };
+}
+
+/**
+ * Removing a course and everything under it.
+ *
+ * The database cascade handles the rows. It cannot handle the files, so the
+ * storage keys are collected first and removed after — material PDFs and every
+ * file a candidate uploaded against a project on this course. Without that,
+ * deleting a course silently leaks every file it ever held.
+ *
+ * A material file shared with another version of the course is left alone; the
+ * count of rows still pointing at it decides.
+ */
 export async function deleteCourse(user, courseId) {
   await assertCourseLead(user, courseId);
+
+  const [materials, submissions] = await Promise.all([
+    prisma.material.findMany({
+      where: { topic: { courseId }, fileUrl: { not: null } },
+      select: { fileUrl: true },
+    }),
+    prisma.projectAllotment.findMany({
+      where: { project: { courseId }, fileUrl: { not: null } },
+      select: { fileUrl: true },
+    }),
+  ]);
+
   await prisma.course.delete({ where: { id: courseId } });
+
+  /**
+   * After the row is gone: an orphaned file is untidy, a course whose deletion
+   * half-happened is a correctness problem.
+   *
+   * deleteFile never rejects — it logs and moves on — so this counts what was
+   * asked for rather than pretending to know what the disk did.
+   */
+  let removed = 0;
+
+  for (const { fileUrl } of submissions) {
+    await deleteFile(fileUrl);
+    removed += 1;
+  }
+
+  for (const { fileUrl } of materials) {
+    // Versioning copies material rows against one storage key, so a file is
+    // only really gone once nothing else points at it.
+    const stillUsed = await prisma.material.count({ where: { fileUrl } });
+    if (stillUsed === 0) {
+      await deleteFile(fileUrl);
+      removed += 1;
+    }
+  }
+
+  return { files: removed };
 }
 
 // ------------------------------------------------------------------ topics
@@ -467,12 +549,28 @@ export async function assignTopicDuties(user, topicId, duties) {
 
   const named = [duties.material, duties.quiz].filter(Boolean);
   if (named.length > 0) {
+    const course = await prisma.course.findUnique({
+      where: { id: topic.courseId },
+      select: { ownerId: true },
+    });
+
     const onTeam = await prisma.courseTrainer.findMany({
       where: { courseId: topic.courseId, userId: { in: named } },
       include: { user: { select: { id: true, fullName: true, isActive: true } } },
     });
 
     for (const userId of new Set(named)) {
+      /**
+       * The lead may take a topic themselves.
+       *
+       * Otherwise a course with no team yet is a dead end: the lead can write
+       * topics and can see they need writing, but cannot record that they are
+       * doing it — and has to wait on an administrator to add somebody before
+       * the screen will let them say so. The handbook has the lead acting as
+       * one of the trainers anyway.
+       */
+      if (userId === course?.ownerId) continue;
+
       const row = onTeam.find((t) => t.userId === userId);
       if (!row) throw new AppError(422, 'That trainer is not on this course’s team');
       if (!row.user.isActive) {

@@ -10,6 +10,7 @@ import { setDoneSchema, submissionSchema } from '../projects/projects.schema.js'
 import { uploadSubmission } from '../../lib/storage.js';
 import { buildAttemptReview } from '../quizzes/attempt-review.js';
 import { shuffleQuizFor } from '../../lib/shuffle.js';
+import { pauseEnrolment, resumeEnrolment } from '../courses/schedule.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
@@ -403,56 +404,21 @@ router.get(
  * Pausing a course, and picking it up again.
  *
  * The deadline moves by exactly the days lost, so a candidate pulled onto an
- * urgent project is not punished for it — which is the only reason to have a
- * pause rather than telling people to ask for an extension.
- *
- * Whole days only, and rounded down: pausing over lunch should buy nobody a
- * day, and the alternative is a deadline that drifts by hours every time.
+ * urgent project is not punished for it. The arithmetic lives in the schedule
+ * service because a lead can do this on their behalf too, and the two must
+ * never disagree about how many days a pause is worth.
  */
 router.post(
   '/courses/:courseId/pause',
   handle(async (req, res) => {
-    const enrolment = await prisma.enrollment.findUnique({
-      where: { userId_courseId: { userId: req.user.id, courseId: req.params.courseId } },
-    });
-    if (!enrolment || enrolment.status !== 'active') {
-      throw new AppError(404, 'You are not on that course');
-    }
-    if (enrolment.pausedAt) throw new AppError(409, 'That course is already paused');
-    if (enrolment.completedAt) throw new AppError(409, 'That course is already finished');
-
-    const updated = await prisma.enrollment.update({
-      where: { id: enrolment.id },
-      data: { pausedAt: new Date() },
-    });
-
-    res.json({ pausedAt: updated.pausedAt });
+    res.json(await pauseEnrolment(req.user.id, req.params.courseId));
   }),
 );
 
 router.post(
   '/courses/:courseId/resume',
   handle(async (req, res) => {
-    const enrolment = await prisma.enrollment.findUnique({
-      where: { userId_courseId: { userId: req.user.id, courseId: req.params.courseId } },
-    });
-    if (!enrolment?.pausedAt) throw new AppError(409, 'That course is not paused');
-
-    const lost = Math.max(0, daysBetween(enrolment.pausedAt, new Date()));
-
-    const updated = await prisma.enrollment.update({
-      where: { id: enrolment.id },
-      data: {
-        pausedAt: null,
-        pausedDays: enrolment.pausedDays + lost,
-        // Only a course that had a deadline gets one moved.
-        ...(enrolment.dueAt && {
-          dueAt: new Date(enrolment.dueAt.getTime() + lost * 86400000),
-        }),
-      },
-    });
-
-    res.json({ resumed: true, daysPaused: lost, dueAt: updated.dueAt });
+    res.json({ resumed: true, ...(await resumeEnrolment(req.user.id, req.params.courseId)) });
   }),
 );
 

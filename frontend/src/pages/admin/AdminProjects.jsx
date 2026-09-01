@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Badge, Card, Empty, Select } from '../../components/ui';
+import { Alert, Badge, Button, Card, Empty, Select } from '../../components/ui';
 
 const formatDate = (value) =>
   value
@@ -47,6 +47,44 @@ export default function AdminProjects() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Removing a project, and everything handed in against it.
+   *
+   * Confirmed against the real numbers rather than a generic "are you sure":
+   * deleting a project nobody has touched is housekeeping, and deleting one
+   * three people have submitted work to destroys that work. The dialog has to
+   * tell those apart, so it asks the server what is actually at stake first.
+   */
+  const remove = async (project) => {
+    setNotice(null);
+    try {
+      const { allotted, handedIn } = await api(`/projects/${project.id}/impact`);
+
+      const warning =
+        allotted === 0
+          ? `Delete "${project.title}"?\n\nNobody has been given it, so nothing is lost.`
+          : [
+              `Delete "${project.title}"?`,
+              `${allotted} candidate${allotted === 1 ? ' has' : 's have'} this project` +
+                (handedIn > 0
+                  ? `, and ${handedIn} ${handedIn === 1 ? 'has' : 'have'} handed work in. Their links, notes and uploaded files go with it.`
+                  : '. Nothing has been handed in yet.'),
+              'This cannot be undone.',
+            ].join('\n\n');
+
+      if (!window.confirm(warning)) return;
+
+      const { allotments } = await api(`/projects/${project.id}`, { method: 'DELETE' });
+      await load();
+      setNotice({
+        tone: 'indigo',
+        text: `"${project.title}" deleted${allotments > 0 ? `, along with ${allotments} candidate cop${allotments === 1 ? 'y' : 'ies'}` : ''}.`,
+      });
+    } catch (err) {
+      setNotice({ tone: 'rose', text: err.message });
+    }
+  };
 
   async function run(id, request, done) {
     setBusyId(id);
@@ -146,6 +184,7 @@ export default function AdminProjects() {
                       key={project.id}
                       project={project}
                       candidates={candidates}
+                      onDelete={remove}
                       busy={busyId === project.id}
                       onGive={give}
                       onTakeBack={takeBack}
@@ -171,7 +210,7 @@ const Heading = () => (
   </div>
 );
 
-function ProjectCard({ project, candidates, busy, onGive, onTakeBack }) {
+function ProjectCard({ project, candidates, busy, onGive, onTakeBack, onDelete }) {
   const holding = new Set(project.candidates.map((c) => c.id));
   const spare = candidates.filter((c) => !holding.has(c.id));
 
@@ -189,11 +228,16 @@ function ProjectCard({ project, candidates, busy, onGive, onTakeBack }) {
           )}
         </div>
 
-        {project.allotted > 0 && (
-          <p className="shrink-0 text-xs text-slate-500">
-            {project.completed} of {project.allotted} finished
-          </p>
-        )}
+        <div className="flex shrink-0 items-center gap-3">
+          {project.allotted > 0 && (
+            <p className="text-xs text-slate-500">
+              {project.completed} of {project.allotted} finished
+            </p>
+          )}
+          <Button variant="danger" size="sm" disabled={busy} onClick={() => onDelete(project)}>
+            Delete
+          </Button>
+        </div>
       </div>
 
       <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-4">

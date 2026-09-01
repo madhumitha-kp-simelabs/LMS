@@ -287,17 +287,18 @@ function CourseDuration({ course, onChanged, onError }) {
   return (
     <button
       onClick={() => setEditing(true)}
-      className="group flex items-center gap-1.5 text-xs"
-      title="Set the expected course duration"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs ring-1 ring-slate-200 transition hover:bg-white hover:ring-slate-300"
+      title="Change how long this course is expected to take"
     >
       {course.durationWeeks ? (
         <span className="text-slate-600">{course.durationWeeks} weeks</span>
       ) : (
-        <span className="text-slate-400">no duration set</span>
+        <span className="text-slate-400">No duration set</span>
       )}
-      <span className="text-xs text-slate-400 opacity-0 transition group-hover:opacity-100">
-        edit
-      </span>
+      {/* Always shown. It used to appear only on hover, which meant nothing on
+          the screen said the duration could be changed — and a control nobody
+          knows is there is the same as one that is not. */}
+      <span className="font-medium text-indigo-600">Edit</span>
     </button>
   );
 }
@@ -403,16 +404,19 @@ function TopicDuty({ course, leads, topic, onChanged, onError }) {
     );
   }
 
-  const active = course.team.filter((member) => member.isActive);
-
-  if (active.length === 0) {
-    return (
-      <p className="text-sm text-slate-500">
-        Nobody is on this course’s team yet, so there is no one to hand the work to. An
-        administrator adds trainers to the team.
-      </p>
-    );
-  }
+  /**
+   * Who can be given this topic: the course's own lead, and the active
+   * trainers on its team.
+   *
+   * The lead is on the list because they can write a topic themselves, and
+   * without them a course with no team yet had nothing to offer at all — the
+   * lead could see the work needed doing and could do it, but could not record
+   * that they were, until an administrator added somebody else.
+   */
+  const assignable = [
+    ...(course.owner ? [course.owner] : []),
+    ...course.team.filter((member) => member.isActive),
+  ];
 
   return (
     <div className="space-y-3">
@@ -429,10 +433,11 @@ function TopicDuty({ course, leads, topic, onChanged, onError }) {
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:opacity-50"
             >
               <option value="">Nobody yet</option>
-              {active.map((member) => (
+              {assignable.map((member) => (
                 <option key={member.id} value={member.id}>
                   {member.fullName}
                   {member.id === user.id ? ' (you)' : ''}
+                  {member.id === course.owner?.id ? ' — lead' : ''}
                 </option>
               ))}
             </select>
@@ -443,7 +448,9 @@ function TopicDuty({ course, leads, topic, onChanged, onError }) {
       <p className="text-xs text-slate-500">
         {busy
           ? 'Saving…'
-          : 'Each person can only touch the half you gave them. Publishing stays with you.'}
+          : course.team.length === 0
+            ? 'Take a topic yourself, or ask an administrator to add trainers to the team.'
+            : 'Each person can only touch the half you gave them. Publishing stays with you.'}
       </p>
     </div>
   );
@@ -456,12 +463,6 @@ function TopicDuty({ course, leads, topic, onChanged, onError }) {
  */
 function CourseMeta({ course, leads, onChanged, onError }) {
   const { user } = useAuth();
-
-  // Counted in halves, since material and quiz are handed out separately.
-  const open = course.topics.reduce(
-    (n, t) => n + (t.materialTrainer ? 0 : 1) + (t.quizTrainer ? 0 : 1),
-    0,
-  );
 
   const standing =
     course.viewer.relation === 'admin'
@@ -488,28 +489,26 @@ function CourseMeta({ course, leads, onChanged, onError }) {
         course.durationWeeks && <span className="text-slate-500">{course.durationWeeks} weeks</span>
       )}
 
-      <span className="flex flex-wrap items-center gap-1.5">
+      {/* Pushed to the right of the strip: who is on the course is a different
+          kind of fact from how long it runs, and separating them by space says
+          so without a divider. Bold because these are names — the one thing in
+          the row somebody scans for. */}
+      <span className="ml-auto flex flex-wrap items-center gap-1.5">
         <span className="font-semibold uppercase tracking-wide text-slate-400">Team</span>
-        <span className="text-slate-700">
+        <span className="font-semibold text-slate-900">
           {course.owner ? `${course.owner.fullName}${course.owner.id === user.id ? ' (you)' : ''}` : 'no lead'}
         </span>
-        <span className="text-slate-300">·</span>
-        {course.team.length === 0 ? (
-          <span className="text-amber-700">no trainers yet</span>
-        ) : (
-          <span className="text-slate-700">
-            {course.team
-              .map((m) => `${m.fullName}${m.id === user.id ? ' (you)' : ''}`)
-              .join(', ')}
-          </span>
+        {course.team.length > 0 && (
+          <>
+            <span className="text-slate-300">·</span>
+            <span className="font-semibold text-slate-900">
+              {course.team
+                .map((m) => `${m.fullName}${m.id === user.id ? ' (you)' : ''}`)
+                .join(', ')}
+            </span>
+          </>
         )}
       </span>
-
-      {course.topics.length > 0 && (
-        <span className={open === 0 ? 'text-emerald-700' : 'text-amber-700'}>
-          {open === 0 ? 'all work handed out' : `${open} job${open === 1 ? '' : 's'} unhanded`}
-        </span>
-      )}
 
       {/* The one fact in this strip that is a job rather than a description, so
           it is the one that is a link. Sits last: you read who is on the course
@@ -821,10 +820,25 @@ function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
         })}
       </div>
 
+      {/* canWrite was computed for the banner and never passed down, so the
+          editors rendered for everyone — a trainer without the duty saw an
+          upload form whose only possible outcome was a 403 from the server. */}
       {tab === 'material' && (
-        <MaterialsSection topic={topic} onChanged={onChanged} onError={onError} />
+        <MaterialsSection
+          topic={topic}
+          canWrite={canWrite.material}
+          onChanged={onChanged}
+          onError={onError}
+        />
       )}
-      {tab === 'quiz' && <QuizSection topic={topic} onChanged={onChanged} onError={onError} />}
+      {tab === 'quiz' && (
+        <QuizSection
+          topic={topic}
+          canWrite={canWrite.quiz}
+          onChanged={onChanged}
+          onError={onError}
+        />
+      )}
       {tab === 'access' && (
         <AllotmentSection
           topic={topic}
@@ -837,7 +851,7 @@ function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
   );
 }
 
-function MaterialsSection({ topic, onChanged, onError }) {
+function MaterialsSection({ topic, canWrite, onChanged, onError }) {
   const fileInput = useRef(null);
   const [title, setTitle] = useState('');
   const [file, setFile] = useState(null);
@@ -877,8 +891,13 @@ function MaterialsSection({ topic, onChanged, onError }) {
   return (
     <Card accent="sky">
       <h3 className="text-lg font-semibold text-slate-900">Course material</h3>
-      <p className="mt-1.5 text-sm text-slate-500">PDF, PPT or PPTX. Up to 50 MB per file.</p>
+      <p className="mt-1.5 text-sm text-slate-500">
+        {canWrite
+          ? 'PDF, PPT or PPTX. Up to 50 MB per file.'
+          : 'Read-only — this topic’s material is another trainer’s duty.'}
+      </p>
 
+      {canWrite && (
       <form onSubmit={handleUpload} className="mt-5 space-y-4 rounded-lg bg-slate-50 p-5">
         <Input
           label="Display title (optional)"
@@ -901,6 +920,7 @@ function MaterialsSection({ topic, onChanged, onError }) {
           {uploading ? 'Uploading…' : 'Upload'}
         </Button>
       </form>
+      )}
 
       <div className="mt-5 space-y-2">
         {topic.materials.length === 0 ? (
@@ -926,9 +946,11 @@ function MaterialsSection({ topic, onChanged, onError }) {
                 <Button variant="secondary" onClick={() => openMaterial(material.id).catch((e) => onError(e.message))}>
                   Open
                 </Button>
-                <Button variant="danger" onClick={() => handleDelete(material.id)}>
-                  Delete
-                </Button>
+                {canWrite && (
+                  <Button variant="danger" onClick={() => handleDelete(material.id)}>
+                    Delete
+                  </Button>
+                )}
               </div>
             </div>
           ))
@@ -1078,8 +1100,20 @@ function AllotmentSection({ topic, candidates, onChanged, onError }) {
                             {/* A lead can be taught a course they do not run,
                                 so they appear here — but handing course work to
                                 someone who elsewhere marks it is worth seeing
-                                before you tick the box, not after. */}
-                            {candidate.role === 'lead' && <Badge tone="indigo">Course lead</Badge>}
+                                before you tick the box, not after.
+                                
+                                Naming the courses rather than just the role:
+                                "Course lead" says they mark work somewhere,
+                                which is not the question. Which courses is. */}
+                            {candidate.role === 'lead' && (
+                              <Badge tone="indigo">
+                                {candidate.leads?.length > 0
+                                  ? `Leads ${candidate.leads
+                                      .map((c) => `${c.code} v${c.version}`)
+                                      .join(', ')}`
+                                  : 'Course lead'}
+                              </Badge>
+                            )}
                           </span>
                           <span className="block truncate text-xs text-slate-500">
                             {candidate.email}

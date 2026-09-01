@@ -392,12 +392,6 @@ function LeadTable({ leads, courses, busyId, onSetRole }) {
           );
         })}
       </Table>
-
-      <p className="text-xs leading-relaxed text-slate-500">
-        A <strong>lead</strong> runs a course: they publish its material and quizzes, and hand each
-        topic to one of the trainers under them. Add or change either on the {allotmentLink}. An
-        amber course code means the course is still a draft.
-      </p>
     </div>
   );
 }
@@ -489,13 +483,6 @@ function TrainerTable({ trainers, busyId, onSetRole }) {
           );
         })}
       </Table>
-
-      <p className="text-xs leading-relaxed text-slate-500">
-        <strong>Runs it</strong> means they are the course’s lead — they publish it and hand out its
-        topics. <strong>Works on it</strong> means they are on someone else’s team, writing the
-        topics they are given. “Topics to write” counts the topics handed to them so far. A trainer
-        on any course must be taken off it on the {allotmentLink} before they can be unmarked.
-      </p>
     </div>
   );
 }

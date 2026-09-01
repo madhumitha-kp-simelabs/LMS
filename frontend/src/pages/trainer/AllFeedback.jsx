@@ -14,6 +14,27 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const toneFor = (rating) => (rating >= 4 ? 'green' : rating >= 3 ? 'amber' : 'rose');
 
+/**
+ * Summarising a set of entries — the same shape the server sends for
+ * everything, recomputed here for whatever the filters have left.
+ *
+ * Nulls are skipped rather than counted as zero, or feedback left before the
+ * content and duration ratings existed would drag both averages down.
+ */
+const mean = (rows, pick) => {
+  const given = rows.map(pick).filter((value) => value != null);
+  if (given.length === 0) return null;
+  return Math.round((given.reduce((sum, v) => sum + v, 0) / given.length) * 10) / 10;
+};
+
+const summarise = (rows) => ({
+  count: rows.length,
+  average: mean(rows, (r) => r.rating),
+  distribution: [1, 2, 3, 4, 5].map((star) => rows.filter((r) => r.rating === star).length),
+  content: mean(rows, (r) => r.contentRating),
+  duration: mean(rows, (r) => r.durationRating),
+});
+
 const Stars = ({ n }) => (
   <span className="text-amber-400" aria-label={`${n} out of 5`}>
     {'★'.repeat(n)}
@@ -65,6 +86,20 @@ export default function AllFeedback() {
   const filtering = Boolean(query.trim() || courseId || band);
   const unrated = courses.filter((course) => course.count === 0);
 
+  /**
+   * The headline describes whatever is on screen.
+   *
+   * It used to be the organisation-wide summary regardless, so picking a course
+   * filtered the comments underneath while the average and the bars carried on
+   * describing everything — a chart quietly answering a different question from
+   * the one just asked.
+   */
+  const picked = courseId ? courses.find((course) => course.id === courseId) : null;
+  const shown = summarise(filtered);
+  const scope = picked
+    ? `${picked.code} v${picked.version} · ${picked.title}`
+    : `Across ${plural(courses.filter((c) => c.count > 0).length, 'course')}`;
+
   return (
     <div className="max-w-4xl">
       <h1 className="text-xl font-semibold text-slate-900">Feedback</h1>
@@ -88,24 +123,27 @@ export default function AllFeedback() {
               <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Across {plural(courses.filter((c) => c.count > 0).length, 'course')}
+                    {scope}
                   </p>
                   <p className="mt-1 flex items-baseline gap-3">
-                    <span className="text-3xl font-semibold text-slate-900">{summary.average}</span>
-                    <Stars n={Math.round(summary.average)} />
+                    <span className="text-3xl font-semibold text-slate-900">
+                      {shown.average ?? '—'}
+                    </span>
+                    {shown.average != null && <Stars n={Math.round(shown.average)} />}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    from {plural(summary.count, 'candidate')}
+                    from {plural(shown.count, 'candidate')}
+                    {filtering && shown.count !== summary.count && ` of ${summary.count}`}
                   </p>
                 </div>
 
                 <div className="flex flex-wrap gap-4">
                   {/* Beside the headline, because the headline is their sum. */}
-                  <Part label="Content" value={summary.content} />
-                  <Part label="Duration" value={summary.duration} />
+                  <Part label="Content" value={shown.content} />
+                  <Part label="Duration" value={shown.duration} />
                 </div>
 
-                <Distribution distribution={summary.distribution} />
+                <Distribution distribution={shown.distribution} />
               </div>
             </Card>
 
@@ -138,7 +176,7 @@ export default function AllFeedback() {
                     .filter((course) => course.count > 0)
                     .map((course) => (
                       <option key={course.id} value={course.id}>
-                        {course.code} ({course.count})
+                        {course.code} v{course.version} ({course.count})
                       </option>
                     ))}
                 </Select>
@@ -190,7 +228,7 @@ export default function AllFeedback() {
               <p className="text-xs text-slate-500">
                 Nothing said yet about{' '}
                 <span className="font-medium text-slate-600">
-                  {unrated.map((course) => course.code).join(' · ')}
+                  {unrated.map((course) => `${course.code} v${course.version}`).join(' · ')}
                 </span>
                 .
               </p>
@@ -250,7 +288,12 @@ function CourseRow({ course, active, onPick }) {
     >
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0">
-          <span className="text-xs font-semibold tracking-wide text-indigo-600">{course.code}</span>
+          <span className="flex items-baseline gap-1.5">
+            <span className="text-xs font-semibold tracking-wide text-indigo-600">
+              {course.code}
+            </span>
+            <span className="text-xs text-slate-400">v{course.version}</span>
+          </span>
           <span className="mt-0.5 block truncate text-sm text-slate-700">{course.title}</span>
         </span>
 
@@ -282,7 +325,7 @@ function Entry({ entry }) {
                 to={`/trainer/courses/${entry.course.id}`}
                 className="text-xs font-semibold tracking-wide text-indigo-600 hover:underline"
               >
-                {entry.course.code}
+                {entry.course.code} v{entry.course.version}
               </Link>
               <span className="text-xs text-slate-500">{entry.course.title}</span>
             </div>

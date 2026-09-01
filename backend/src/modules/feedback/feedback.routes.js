@@ -38,6 +38,7 @@ router.get(
           select: {
             id: true,
             code: true,
+            version: true,
             title: true,
             ownerId: true,
             category: { select: { id: true, name: true, slug: true, position: true } },
@@ -55,6 +56,7 @@ router.get(
       select: {
         id: true,
         code: true,
+        version: true,
         title: true,
         ownerId: true,
         category: { select: { id: true, name: true, slug: true, position: true } },

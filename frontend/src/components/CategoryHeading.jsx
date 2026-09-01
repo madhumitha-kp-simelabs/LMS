@@ -24,7 +24,7 @@ const RULES = {
   slate: 'bg-slate-300',
 };
 
-export default function CategoryHeading({ category, count, open = true, onToggle }) {
+export default function CategoryHeading({ category, count, open = true, onToggle, preview }) {
   const rule = RULES[toneForCategory(category)];
 
   const inside = (
@@ -47,17 +47,21 @@ export default function CategoryHeading({ category, count, open = true, onToggle
       <h2 className="text-sm font-semibold text-slate-900">{category.name}</h2>
 
       {count != null && (
-        <span className="text-xs text-slate-500">
-          {count} course{count === 1 ? '' : 's'}
-          {/* Only worth saying while it is hidden — the courses themselves say
-              it the rest of the time. */}
-          {!open && <span className="text-slate-400"> · hidden</span>}
+        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-600">
+          {count}
         </span>
       )}
 
-      {/* Fills the rest of the row so the heading reads as a divider between
-          groups rather than a label floating above the first card. */}
-      <span className="h-px flex-1 bg-slate-200" aria-hidden />
+      {/* Folded, the row has to earn its place. "3 courses · hidden" says only
+          that something is missing; the codes say what, which is often all you
+          came to check. The chevron already carries "this is collapsed". */}
+      {!open && preview ? (
+        <span className="min-w-0 flex-1 truncate text-left text-xs text-slate-400">{preview}</span>
+      ) : (
+        // Fills the rest of the row so an open heading reads as a divider
+        // between groups rather than a label floating above the first card.
+        <span className="h-px flex-1 bg-slate-200" aria-hidden />
+      )}
     </>
   );
 
@@ -68,7 +72,7 @@ export default function CategoryHeading({ category, count, open = true, onToggle
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      className="group flex w-full items-center gap-3 rounded-lg py-1 text-left transition hover:bg-slate-50"
+      className="group flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-slate-100/70"
     >
       {inside}
     </button>

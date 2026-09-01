@@ -100,7 +100,21 @@ export default function CompletionSummary({ courseId, durationWeeks, onError, pr
 
         {inProgress.map((candidate) => {
           const elapsed = weeksSince(candidate.startedAt);
-          const overdue = durationWeeks != null && elapsed > durationWeeks;
+          /**
+           * Measured against their own deadline, not weeks since they started.
+           *
+           * It used to compare elapsed weeks with the course's duration, which
+           * ignored both pauses and granted extensions — so a candidate who had
+           * been given three extra weeks still showed as overdue, and the badge
+           * contradicted the extension the lead had just approved.
+           */
+          const overdue =
+            !candidate.pausedAt &&
+            candidate.dueAt != null &&
+            new Date(candidate.dueAt) < new Date();
+          const daysOver = overdue
+            ? Math.floor((Date.now() - new Date(candidate.dueAt).getTime()) / 86400000)
+            : 0;
 
           return (
             <li
@@ -120,8 +134,12 @@ export default function CompletionSummary({ courseId, durationWeeks, onError, pr
                     ` · week ${elapsed + 1} of ${durationWeeks}`}
                 </span>
               </span>
-              <Badge tone={overdue ? 'amber' : 'indigo'}>
-                {overdue ? `${elapsed - durationWeeks}w over` : 'In progress'}
+              <Badge tone={overdue ? 'rose' : candidate.pausedAt ? 'slate' : 'indigo'}>
+                {overdue
+                  ? `${daysOver}d over`
+                  : candidate.pausedAt
+                    ? 'Paused'
+                    : 'In progress'}
               </Badge>
             </li>
           );

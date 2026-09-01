@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Alert, Badge, Button, Card, Empty, Input, Select } from '../../components/ui';
@@ -30,11 +30,50 @@ export default function AllProjects() {
   const [scope, setScope] = useState('all');
   const folds = useCollapsedCategories('lt.allProjects.collapsed');
 
+  const load = useCallback(
+    () =>
+      api('/projects/all')
+        .then(({ projects }) => setProjects(projects))
+        .catch((err) => setError(err.message)),
+    [],
+  );
+
   useEffect(() => {
-    api('/projects/all')
-      .then(({ projects }) => setProjects(projects))
-      .catch((err) => setError(err.message));
-  }, []);
+    load();
+  }, [load]);
+
+  /**
+   * Removing a project from here, with what it costs stated first.
+   *
+   * Only on courses you lead — the page shows the whole organisation's work,
+   * and a delete button on somebody else's project would be one slip from
+   * destroying a cohort's submissions on a course you have never taught.
+   */
+  const remove = async (project) => {
+    setError(null);
+    try {
+      const { allotted, handedIn } = await api(`/projects/${project.id}/impact`);
+
+      const warning =
+        allotted === 0
+          ? [`Delete "${project.title}"?`, 'Nobody has been given it, so nothing is lost.']
+          : [
+              `Delete "${project.title}"?`,
+              `${allotted} candidate${allotted === 1 ? ' has' : 's have'} this project` +
+                (handedIn > 0
+                  ? `, and ${handedIn} ${handedIn === 1 ? 'has' : 'have'} handed work in. Their links, notes and uploaded files go with it.`
+                  : '. Nothing has been handed in yet.'),
+              'This cannot be undone.',
+            ];
+
+      if (!window.confirm(warning.join('\n\n'))) return;
+
+      await api(`/projects/${project.id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -143,7 +182,7 @@ export default function AllProjects() {
                     {folds.isOpen(group.category) && (
                     <div className="mt-3 space-y-3">
                       {group.courses.map((project) => (
-                        <ProjectRow key={project.id} project={project} />
+                        <ProjectRow key={project.id} project={project} onDelete={remove} />
                       ))}
                     </div>
                     )}
@@ -158,7 +197,7 @@ export default function AllProjects() {
   );
 }
 
-function ProjectRow({ project }) {
+function ProjectRow({ project, onDelete }) {
   const { course } = project;
   const done = project.allotted === 0 ? 0 : Math.round((project.completed / project.allotted) * 100);
 
@@ -192,6 +231,17 @@ function ProjectRow({ project }) {
 
           <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
             <span>{project.mine ? 'Yours' : `Led by ${course.owner?.fullName ?? 'nobody yet'}`}</span>
+            {project.mine && (
+              <>
+                <span className="text-slate-300">·</span>
+                <button
+                  onClick={() => onDelete(project)}
+                  className="text-rose-600 underline transition hover:text-rose-700"
+                >
+                  Delete
+                </button>
+              </>
+            )}
             {course.category && (
               <>
                 <span className="text-slate-300">·</span>

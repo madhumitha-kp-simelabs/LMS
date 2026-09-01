@@ -358,6 +358,7 @@ router.get(
             select: {
               id: true,
               code: true,
+              version: true,
               title: true,
               isPublished: true,
               durationWeeks: true,
@@ -410,9 +411,19 @@ router.get(
         durationWeeks: course.durationWeeks,
         trainer: course.owner,
         status: enrollment.status,
+        version: course.version,
         enrolledAt: enrollment.enrolledAt,
         startedAt: enrollment.startedAt,
+        // When they are due to finish, and the three ways that can already have
+        // happened. An administrator looking at somebody's record needs the
+        // deadline as much as the start — "started 27 Aug" says nothing about
+        // whether they are late.
+        dueAt: enrollment.dueAt,
         completedAt: enrollment.completedAt,
+        pausedAt: enrollment.pausedAt,
+        pausedDays: enrollment.pausedDays,
+        supersededAt: enrollment.supersededAt,
+        discontinuedAt: enrollment.discontinuedAt,
         topics: course._count.topics,
         topicsAllotted: allotted.length,
         quizzesDone: mine.length,

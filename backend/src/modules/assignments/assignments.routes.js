@@ -38,12 +38,30 @@ router.get(
   handle(async (req, res) => {
     const candidates = await prisma.user.findMany({
       where: { role: { in: ['candidate', 'lead'] }, isActive: true },
-      select: { id: true, fullName: true, email: true, role: true },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        role: true,
+        // Which courses they run. "Course lead" alone says somebody marks work
+        // somewhere; naming the courses says where, which is the part that
+        // decides whether handing them this topic is sensible.
+        coursesOwned: {
+          orderBy: [{ code: 'asc' }, { version: 'asc' }],
+          select: { id: true, code: true, version: true, title: true },
+        },
+      },
       // Candidates first, then leads, alphabetical within each — the ordinary
       // case stays at the top of a long list.
       orderBy: [{ role: 'asc' }, { fullName: 'asc' }],
     });
-    res.json({ candidates });
+
+    res.json({
+      candidates: candidates.map(({ coursesOwned, ...person }) => ({
+        ...person,
+        leads: coursesOwned,
+      })),
+    });
   }),
 );
 

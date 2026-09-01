@@ -10,7 +10,7 @@ const blankDraft = () => ({
   options: [{ ...BLANK_OPTION }, { ...BLANK_OPTION }],
 });
 
-export default function QuizSection({ topic, onChanged, onError }) {
+export default function QuizSection({ topic, canWrite = true, onChanged, onError }) {
   const [quiz, setQuiz] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -77,12 +77,15 @@ export default function QuizSection({ topic, onChanged, onError }) {
       <Card accent="violet">
         <h3 className="font-semibold text-slate-900">Quiz</h3>
         <p className="mt-1 text-sm text-slate-500">
-          No quiz for this topic yet. Create one, then add the MCQs candidates will answer after
-          reading the material.
+          {canWrite
+            ? 'No quiz for this topic yet. Create one, then add the MCQs candidates will answer after reading the material.'
+            : 'No quiz for this topic yet. Whoever is on quiz duty for it writes one.'}
         </p>
+        {canWrite && (
         <Button onClick={handleCreateQuiz} disabled={busy} className="mt-4">
           {busy ? 'Creating…' : 'Create quiz'}
         </Button>
+        )}
       </Card>
     );
   }
@@ -113,18 +116,25 @@ export default function QuizSection({ topic, onChanged, onError }) {
           <Badge tone={quiz.isPublished ? 'green' : 'amber'}>
             {quiz.isPublished ? 'Published' : 'Draft'}
           </Badge>
-          <Button variant="secondary" onClick={togglePublished} disabled={busy}>
-            {quiz.isPublished ? 'Unpublish' : 'Publish'}
-          </Button>
+          {/* Publishing is the lead's, and `canWrite` already excludes a
+              trainer who is not on quiz duty. A trainer who is on duty still
+              gets it, which matches how the topic tabs have always behaved. */}
+          {canWrite && (
+            <Button variant="secondary" onClick={togglePublished} disabled={busy}>
+              {quiz.isPublished ? 'Unpublish' : 'Publish'}
+            </Button>
+          )}
         </div>
       </div>
 
-      <QuizSettings
-        quiz={quiz}
-        bankSize={questions.length}
-        onSaved={() => loadQuiz(quiz.id).then(onChanged)}
-        onError={onError}
-      />
+      {canWrite && (
+        <QuizSettings
+          quiz={quiz}
+          bankSize={questions.length}
+          onSaved={() => loadQuiz(quiz.id).then(onChanged)}
+          onError={onError}
+        />
+      )}
 
       <div className="mt-4 space-y-3">
         {questions.length === 0 ? (
@@ -135,6 +145,7 @@ export default function QuizSection({ topic, onChanged, onError }) {
               key={question.id}
               index={index + 1}
               question={question}
+              canWrite={canWrite}
               onChanged={() => loadQuiz(quiz.id).then(onChanged)}
               onError={onError}
             />
@@ -142,24 +153,28 @@ export default function QuizSection({ topic, onChanged, onError }) {
         )}
       </div>
 
-      <QuestionForm
-        quizId={quiz.id}
-        onSaved={() => loadQuiz(quiz.id).then(onChanged)}
-        onError={onError}
-      />
+      {canWrite && (
+        <>
+          <QuestionForm
+            quizId={quiz.id}
+            onSaved={() => loadQuiz(quiz.id).then(onChanged)}
+            onError={onError}
+          />
 
-      <ImportQuestions
-        quizId={quiz.id}
-        onImported={() => loadQuiz(quiz.id).then(onChanged)}
-        onError={onError}
-      />
+          <ImportQuestions
+            quizId={quiz.id}
+            onImported={() => loadQuiz(quiz.id).then(onChanged)}
+            onError={onError}
+          />
+        </>
+      )}
     </Card>
   );
 }
 
 // ------------------------------------------------------------- existing row
 
-function QuestionRow({ index, question, onChanged, onError }) {
+function QuestionRow({ index, question, canWrite = true, onChanged, onError }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -211,14 +226,16 @@ function QuestionRow({ index, question, onChanged, onError }) {
           </div>
           <p className="mt-1.5 text-sm font-medium text-slate-900">{question.prompt}</p>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <Button variant="secondary" onClick={() => setEditing(true)}>
-            Edit
-          </Button>
-          <Button variant="danger" onClick={handleDelete} disabled={deleting}>
-            {deleting ? '…' : 'Delete'}
-          </Button>
-        </div>
+        {canWrite && (
+          <div className="flex shrink-0 gap-2">
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            <Button variant="danger" onClick={handleDelete} disabled={deleting}>
+              {deleting ? '…' : 'Delete'}
+            </Button>
+          </div>
+        )}
       </div>
 
       <ul className="mt-3 space-y-1">

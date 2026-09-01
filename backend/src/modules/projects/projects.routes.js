@@ -121,13 +121,25 @@ router.delete(
   }),
 );
 
-/** Deleting a project takes every candidate's copy with it. */
+/** What deleting would take with it, for the screen to warn about first. */
+router.get(
+  '/:projectId/impact',
+  staffOnly,
+  handle(async (req, res) => {
+    res.json(await projects.deletionImpact(req.user, req.params.projectId));
+  }),
+);
+
+/**
+ * Deleting a project takes every candidate's copy with it — their links, notes
+ * and uploaded files. Returns how many went, so the screen can say so rather
+ * than reporting a bare success.
+ */
 router.delete(
   '/:projectId',
   staffOnly,
   handle(async (req, res) => {
-    await projects.deleteProject(req.user, req.params.projectId);
-    res.status(204).end();
+    res.json(await projects.deleteProject(req.user, req.params.projectId));
   }),
 );
 

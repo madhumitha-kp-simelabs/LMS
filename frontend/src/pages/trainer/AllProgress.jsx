@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import {
@@ -13,13 +13,19 @@ import {
 } from '../../components/ui';
 import AttemptReview from '../../components/AttemptReview';
 import OtherCourses from '../../components/OtherCourses';
-
-const formatDate = (value) =>
-  value
-    ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-    : null;
+import PauseCandidate from '../../components/PauseCandidate';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * Day and month only, for the standing badges.
+ *
+ * A column of dates all in the same year does not need the year repeated on
+ * every row, and "Started 14 Aug 2026" is wide enough to push the score column
+ * off the end. The full date is still on the expanded panel.
+ */
+const shortDate = (value) =>
+  value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
 
 /**
  * Where a candidate stands, and what the standing filter selects on.
@@ -34,6 +40,14 @@ const standingOf = (row) => {
   if (row.startedAt) return 'inProgress';
   return 'notStarted';
 };
+
+/**
+ * One grid for the column labels and every row, so the numbers line up down the
+ * page. Each row used to be its own card sizing itself, which turned a list of
+ * six people into six independent objects with nothing aligned between them.
+ */
+const GRID =
+  'grid grid-cols-[minmax(0,1fr)_150px_92px_minmax(0,168px)_64px_28px] items-center gap-x-4';
 
 const STANDINGS = {
   needsWork: 'Needs help',
@@ -58,11 +72,17 @@ export default function AllProgress() {
   const [standing, setStanding] = useState('');
   const [expanded, setExpanded] = useState(null);
 
+  const load = useCallback(
+    () =>
+      api('/progress')
+        .then(setData)
+        .catch((err) => setError(err.message)),
+    [],
+  );
+
   useEffect(() => {
-    api('/progress')
-      .then(setData)
-      .catch((err) => setError(err.message));
-  }, []);
+    load();
+  }, [load]);
 
   const rows = data?.progress ?? [];
 
@@ -210,18 +230,36 @@ export default function AllProgress() {
             {filtered.length === 0 ? (
               <Empty>Nobody matches those filters.</Empty>
             ) : (
-              <div className="space-y-3">
-                {filtered.map((row) => {
-                  const key = `${row.course.id}:${row.id}`;
-                  return (
-                    <Row
-                      key={key}
-                      row={row}
-                      open={expanded === key}
-                      onToggle={() => setExpanded(expanded === key ? null : key)}
-                    />
-                  );
-                })}
+              <div>
+                <div
+                  className={`${GRID} px-5 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400`}
+                >
+                  <span>Candidate</span>
+                  <span>Course</span>
+                  <span className="text-right">Quizzes</span>
+                  <span>Standing</span>
+                  <span className="text-right">Score</span>
+                  <span />
+                </div>
+
+                <Card flush className="overflow-hidden">
+                  <ul className="divide-y divide-slate-100">
+                    {filtered.map((row) => {
+                      const key = `${row.course.id}:${row.id}`;
+                      return (
+                        <li key={key}>
+                          <Row
+                            row={row}
+                            open={expanded === key}
+                            onToggle={() => setExpanded(expanded === key ? null : key)}
+                            onChanged={load}
+                            onError={setError}
+                          />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Card>
               </div>
             )}
           </>
@@ -273,46 +311,91 @@ function Tile({ label, value, hint, accent, active, onPick }) {
   );
 }
 
-function Row({ row, open, onToggle }) {
+function Row({ row, open, onToggle, onChanged, onError }) {
   const [reviewing, setReviewing] = useState(null);
   const standing = standingOf(row);
 
   const badge = {
     needsWork: { tone: 'rose', label: `Needs help · ${row.needsWork.length}` },
-    completed: { tone: 'green', label: `Completed ${formatDate(row.completedAt)}` },
-    inProgress: { tone: 'indigo', label: `Started ${formatDate(row.startedAt)}` },
+    completed: { tone: 'green', label: `Done ${shortDate(row.completedAt)}` },
+    inProgress: { tone: 'indigo', label: `Started ${shortDate(row.startedAt)}` },
     notStarted: { tone: 'slate', label: 'Not started' },
   }[standing];
 
   return (
-    <Card flush accent={standing === 'needsWork' ? 'rose' : undefined}>
-      <button onClick={onToggle} className="w-full px-5 py-4 text-left">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">
-            <span className="block font-medium text-slate-900">{row.fullName}</span>
-            <span className="flex flex-wrap items-baseline gap-x-2 text-xs">
-              <span className="font-semibold tracking-wide text-indigo-600">{row.course.code}</span>
-              <span className="text-slate-500">{row.course.title}</span>
-            </span>
-          </div>
+    <>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`${GRID} w-full px-5 py-3 text-left transition hover:bg-slate-50/70 ${
+          open ? 'bg-slate-50' : ''
+        }`}
+      >
+        {/* A thin stripe rather than the card's full accent border: on a list
+            where a third of the rows need attention, an outline around each one
+            is more alarm than information. */}
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span
+            className={`h-8 w-0.5 shrink-0 rounded-full ${
+              standing === 'needsWork' ? 'bg-rose-500' : 'bg-transparent'
+            }`}
+            aria-hidden
+          />
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-slate-900">{row.fullName}</span>
+            <span className="block truncate text-xs text-slate-500">{row.email}</span>
+          </span>
+        </span>
 
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <span className="text-slate-500">
-              {row.quizzesDone}/{row.quizzesAvailable} quizzes
-            </span>
-            <Badge tone={badge.tone}>{badge.label}</Badge>
-            {row.overallPercentage === null ? (
-              <span className="text-slate-400">—</span>
-            ) : (
-              <Badge tone={toneForScore(row.overallPercentage)}>{row.overallPercentage}%</Badge>
-            )}
-            <span className="text-xs text-slate-400">{open ? '▲' : '▼'}</span>
-          </div>
-        </div>
+        <span className="min-w-0">
+          <span className="block text-xs font-semibold tracking-wide text-indigo-600">
+            {row.course.code}
+          </span>
+          <span className="block truncate text-xs text-slate-500">{row.course.title}</span>
+        </span>
+
+        <span className="text-right text-sm tabular-nums text-slate-600">
+          {row.quizzesDone}/{row.quizzesAvailable}
+        </span>
+
+        <span className="min-w-0">
+          <Badge tone={badge.tone}>{badge.label}</Badge>
+        </span>
+
+        <span className="text-right">
+          {row.overallPercentage === null ? (
+            <span className="text-sm text-slate-400">—</span>
+          ) : (
+            <Badge tone={toneForScore(row.overallPercentage)}>{row.overallPercentage}%</Badge>
+          )}
+        </span>
+
+        {/* Rotated, so it reads as one control moving rather than two glyphs. */}
+        <span
+          className={`text-xs text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        >
+          ▾
+        </span>
       </button>
 
       {open && (
-        <div className="border-t border-slate-200 px-5 py-4">
+        <div className="border-t border-slate-100 bg-slate-50/40 px-5 py-4">
+          {/* The schedule first: whether somebody is behind is the frame you
+              read the rest of the row through. Only offered on courses the
+              reader leads — moving a deadline on somebody else's course is not
+              theirs to do, and the server refuses it either way. */}
+          {row.mine && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-2.5">
+              <PauseCandidate
+                courseId={row.course.id}
+                candidate={row}
+                onChanged={onChanged}
+                onError={onError}
+              />
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Topic by topic
@@ -378,6 +461,6 @@ function Row({ row, open, onToggle }) {
           <OtherCourses courses={row.otherCourses} />
         </div>
       )}
-    </Card>
+    </>
   );
 }
