@@ -15,6 +15,33 @@ const round = (n) => Math.round(n * 10) / 10;
  * attempt per quiz, marks-weighted — so a trainer and a candidate never see
  * different numbers for the same work.
  */
+/**
+ * The day a course ends for one candidate, as things stand today.
+ *
+ * `dueAt` is the stored deadline and already carries almost everything: it is
+ * stamped from the course's duration the day they start, moved forward by
+ * exactly the days lost each time a pause ends, and replaced outright when a
+ * lead grants an extension.
+ *
+ * The one thing it cannot know is a pause that is still running. Those days are
+ * only added on resume, so somebody paused a fortnight ago would otherwise show
+ * a deadline a fortnight out of date — and be read as overdue while their clock
+ * is deliberately stopped. Adding the days elapsed so far is what makes the
+ * date on screen mean the same thing for a paused candidate as for anyone else.
+ *
+ * Derived rather than written back: the pause is still running, so any number
+ * stored now would be wrong tomorrow.
+ */
+const endsAt = (enrollment) => {
+  if (!enrollment.dueAt) return null;
+  if (!enrollment.pausedAt) return enrollment.dueAt;
+
+  // Rounded down, matching resumeEnrolment — the two must not disagree, or the
+  // date would jump the moment somebody pressed Resume.
+  const lost = Math.max(0, Math.floor((Date.now() - enrollment.pausedAt.getTime()) / 86400000));
+  return new Date(enrollment.dueAt.getTime() + lost * 86400000);
+};
+
 export async function courseProgress(courseId) {
   const [topics, enrollments, assignments] = await Promise.all([
     prisma.topic.findMany({
@@ -69,10 +96,15 @@ export async function courseProgress(courseId) {
             status: true,
             startedAt: true,
             completedAt: true,
+            // The schedule on the other course too — "also studying" is only
+            // useful if it says when that one is due to end.
+            dueAt: true,
+            pausedAt: true,
             course: {
               select: {
                 id: true,
                 code: true,
+                version: true,
                 title: true,
                 owner: { select: { id: true, fullName: true } },
               },
@@ -86,11 +118,15 @@ export async function courseProgress(courseId) {
     list.push({
       id: row.course.id,
       code: row.course.code,
+      version: row.course.version,
       title: row.course.title,
       lead: row.course.owner?.fullName ?? null,
       status: row.status,
       startedAt: row.startedAt,
       completedAt: row.completedAt,
+      dueAt: row.dueAt,
+      // Same running-pause adjustment as the main row, so the two agree.
+      endsAt: endsAt(row),
     });
     elsewhereByCandidate.set(row.userId, list);
   }
@@ -196,6 +232,8 @@ export async function courseProgress(courseId) {
       // The schedule, so a lead can see the deadline and pause the clock from
       // the same row they are reading the progress on.
       dueAt: enrollment.dueAt,
+      // The same date with a running pause taken into account — see endsAt.
+      endsAt: endsAt(enrollment),
       pausedAt: enrollment.pausedAt,
       pausedDays: enrollment.pausedDays,
       otherCourses: elsewhereByCandidate.get(enrollment.userId) ?? [],

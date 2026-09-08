@@ -66,8 +66,9 @@ export default function BrowseCourses() {
     <div>
       <h1 className="text-xl font-semibold text-slate-900">Browse courses</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Every course in the organisation, by subject. Ask to join one and its lead will give you
-        access; the ones you already work on are marked.
+        Every course you could take, by subject. Ask to join one and its lead will give you
+        access; the ones you already work on are marked. Courses you lead are not listed — they
+        are under Courses.
       </p>
 
       <div className="mt-4">

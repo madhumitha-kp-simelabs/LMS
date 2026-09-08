@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { HOME_FOR_ROLE, useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
 import { initials } from './ui';
@@ -80,11 +80,75 @@ const NAV_FOR_ROLE = {
   ],
 };
 
+/**
+ * What the staff half of the nav is called for each role.
+ *
+ * The learner half is always "As candidate" — that is what somebody taking a
+ * course is, whatever their job title. The other half is named by the job.
+ */
+const STAFF_HAT = { lead: 'As lead', trainer: 'As trainer', admin: 'As admin' };
+
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const links = NAV_FOR_ROLE[user.role] ?? [];
   const role = ROLE[user.role];
+
+  /**
+   * Which hat they are wearing: 'staff', 'learner', or null for neither yet.
+   *
+   * Only means anything for somebody whose nav has both halves — a lead runs
+   * courses and is taught others, and the two sets of screens answer different
+   * questions. Holding one at a time is what stops the bar reading as ten
+   * equally likely places to go.
+   *
+   * Starts as null on every sign-in: the choice is "what am I here to do
+   * today", and inheriting yesterday's answer would make it invisible. Kept in
+   * sessionStorage so a page refresh does not ask again, and cleared on the way
+   * out so the next sign-in starts blank.
+   */
+  const hatKey = `lt.hat.${user.id ?? user.email}`;
+  const [hat, setHat] = useState(() => {
+    try {
+      return sessionStorage.getItem(hatKey);
+    } catch {
+      // Private windows and blocked site data throw on read.
+      return null;
+    }
+  });
+
+  // Where the learner half starts. -1 for a role with only one half, and the
+  // switcher is not offered at all then.
+  const splitAt = links.findIndex((link) => link.section);
+  const bothHats = splitAt > 0;
+  const halfOf = (index) => (index < splitAt ? 'staff' : 'learner');
+  // A role with one half is unaffected: everything stays live, as before.
+  const usable = (index) => !bothHats || hat === halfOf(index);
+
+  function wearHat(next) {
+    setHat(next);
+    try {
+      sessionStorage.setItem(hatKey, next);
+    } catch {
+      // Not being able to remember it is survivable; the choice still applies.
+    }
+
+    // Taken to the first screen of the half they picked. Without this, choosing
+    // "As candidate" while reading a staff page leaves somebody on a page whose
+    // whole nav has just gone grey, with nothing to click.
+    const first = links.findIndex((link, index) => halfOf(index) === next);
+    if (first !== -1) navigate(links[first].to);
+  }
+
+  function signOut() {
+    try {
+      sessionStorage.removeItem(hatKey);
+    } catch {
+      // Nothing to do — the logout below is what matters.
+    }
+    logout();
+  }
 
   const [pending, setPending] = useState(0);
   const [unread, setUnread] = useState(0);
@@ -184,7 +248,7 @@ export default function AppLayout() {
             </Link>
 
             <nav className="flex items-center gap-1">
-              {links.map((link) => (
+              {links.map((link, index) => (
                 // A rule before `section`, so a lead's two lives read as two
                 // groups rather than one run-on list. Fragment keyed on the
                 // link, since the divider belongs to it.
@@ -192,35 +256,88 @@ export default function AppLayout() {
                   {link.section && (
                     <span className="mx-1.5 h-5 w-px shrink-0 bg-slate-200" aria-hidden />
                   )}
-                <NavLink
-                  to={link.to}
-                  end={link.end}
-                  className={({ isActive }) =>
-                    `flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition ${
-                      isActive
-                        ? 'bg-indigo-50 font-medium text-indigo-700'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                    }`
-                  }
-                >
-                  {link.label}
-                  {link.badge === 'notices' && unread > 0 && (
-                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
-                      {unread}
-                    </span>
-                  )}
-                  {link.badge === 'requests' && pending > 0 && (
-                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
-                      {pending}
-                    </span>
-                  )}
-                </NavLink>
+                {usable(index) ? (
+                  <NavLink
+                    to={link.to}
+                    end={link.end}
+                    className={({ isActive }) =>
+                      `flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition ${
+                        isActive
+                          ? 'bg-indigo-50 font-medium text-indigo-700'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`
+                    }
+                  >
+                    {link.label}
+                    {link.badge === 'notices' && unread > 0 && (
+                      <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
+                        {unread}
+                      </span>
+                    )}
+                    {link.badge === 'requests' && pending > 0 && (
+                      <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
+                        {pending}
+                      </span>
+                    )}
+                  </NavLink>
+                ) : (
+                  // A span, not a disabled link: there is nothing to follow, so
+                  // there should be no anchor to middle-click or copy either.
+                  // Badges are dropped with it — a count nobody can act on is
+                  // noise sitting next to a word they cannot press.
+                  <span
+                    aria-disabled="true"
+                    title={
+                      hat === null
+                        ? 'Pick a hat beside your name first'
+                        : `Switch to "${
+                            halfOf(index) === 'staff' ? STAFF_HAT[user.role] : 'As candidate'
+                          }" to use this`
+                    }
+                    className="cursor-not-allowed whitespace-nowrap rounded-lg px-3 py-1.5 text-sm text-slate-300"
+                  >
+                    {link.label}
+                  </span>
+                )}
                 </Fragment>
               ))}
             </nav>
           </div>
 
           <div className="flex shrink-0 items-center gap-4">
+            {/* Only for somebody who has both halves. A candidate, a trainer or
+                an admin has one set of screens, and a switch with one setting
+                is a control that does nothing. */}
+            {bothHats && (
+              <span
+                className={`inline-flex divide-x overflow-hidden rounded-lg border text-xs ${
+                  hat === null
+                    ? // Nothing picked yet, and the whole nav is grey behind it,
+                      // so the switch has to be what the eye lands on.
+                      'divide-amber-200 border-amber-300 bg-amber-50 ring-2 ring-amber-100'
+                    : 'divide-slate-200 border-slate-200 bg-white'
+                }`}
+              >
+                {[
+                  ['staff', STAFF_HAT[user.role] ?? 'As staff'],
+                  ['learner', 'As candidate'],
+                ].map(([which, label]) => (
+                  <button
+                    key={which}
+                    onClick={() => wearHat(which)}
+                    aria-pressed={hat === which}
+                    className={`whitespace-nowrap px-2.5 py-1.5 font-medium transition ${
+                      hat === which
+                        ? 'bg-indigo-50 text-indigo-700'
+                        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </span>
+            )}
+
             <div className="flex items-center gap-3">
               <span
                 className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold ${role.avatar}`}
@@ -239,7 +356,7 @@ export default function AppLayout() {
             <span className="h-8 w-px bg-slate-200" aria-hidden />
 
             <button
-              onClick={logout}
+              onClick={signOut}
               className="rounded-lg px-3 py-1.5 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
             >
               Sign out

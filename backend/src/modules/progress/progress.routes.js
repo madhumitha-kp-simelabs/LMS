@@ -30,10 +30,13 @@ router.get(
 
     const courses = await prisma.course.findMany({
       where: mine,
-      orderBy: { code: 'asc' },
+      orderBy: [{ code: 'asc' }, { version: 'asc' }],
       select: {
         id: true,
         code: true,
+        // Two editions of a course share a code and a title, so without the
+        // version a lead cannot tell which one a candidate is actually on.
+        version: true,
         title: true,
         ownerId: true,
         category: { select: { id: true, name: true, slug: true, position: true } },
@@ -53,6 +56,7 @@ router.get(
           course: {
             id: course.id,
             code: course.code,
+            version: course.version,
             title: course.title,
             category: course.category,
           },

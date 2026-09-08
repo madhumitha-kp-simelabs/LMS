@@ -8,6 +8,11 @@ import DeleteCourse from './DeleteCourse';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+const formatDate = (value) =>
+  value
+    ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
+
 /**
  * The course catalogue: what courses exist, and what they are called.
  *
@@ -17,6 +22,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
  */
 export default function AdminCourses() {
   const [courses, setCourses] = useState(null);
+  const [archived, setArchived] = useState([]);
   const [categories, setCategories] = useState([]);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -24,9 +30,10 @@ export default function AdminCourses() {
 
   const load = useCallback(
     () =>
-      Promise.all([api('/courses'), api('/categories')])
-        .then(([{ courses }, { categories }]) => {
+      Promise.all([api('/courses'), api('/categories'), api('/admin/courses/archived')])
+        .then(([{ courses }, { categories }, { courses: retired }]) => {
           setCourses(courses);
+          setArchived(retired);
           setCategories(categories);
         })
         .catch((err) => setError(err.message)),
@@ -81,6 +88,34 @@ export default function AdminCourses() {
       text: `${course.code} v${course.version} deleted${files > 0 ? `, along with ${files} stored file${files === 1 ? '' : 's'}` : ''}.`,
     });
   };
+
+  /**
+   * Retiring a course instead of destroying it.
+   *
+   * Confirmed with the number of people currently on it, because that is the
+   * consequence an administrator is actually deciding about: the course keeps
+   * everything, but the people part-way through stop being able to reach it.
+   */
+  const archive = (course) => {
+    if (
+      !window.confirm(
+        `Archive ${course.code} v${course.version}? It keeps every topic, result and enrolment, but stops being offered and cannot be copied into a new version. You can restore it at any time.`,
+      )
+    ) {
+      return Promise.resolve(false);
+    }
+
+    return run(async () => {
+      const { course: done } = await api(`/admin/courses/${course.id}/archive`, { method: 'POST' });
+      return done;
+    }, `${course.code} v${course.version} archived. It is in Archived courses below.`);
+  };
+
+  const restore = (course) =>
+    run(
+      () => api(`/admin/courses/${course.id}/restore`, { method: 'POST' }),
+      `${course.code} v${course.version} restored, exactly as it was.`,
+    );
 
   /**
    * Copying a course into its next version.
@@ -191,11 +226,19 @@ export default function AdminCourses() {
               busy={busy}
               onSave={saveCourse}
               onDuplicate={duplicate}
-              onDeleted={removeCourse}
+              onArchive={archive}
               onError={(text) => setNotice({ tone: 'rose', text })}
             />
           </div>
         </section>
+
+        <ArchivedCourses
+          courses={archived}
+          busy={busy}
+          onRestore={restore}
+          onDeleted={removeCourse}
+          onError={(text) => setNotice({ tone: 'rose', text })}
+        />
       </div>
     </div>
   );
@@ -469,7 +512,7 @@ const GRID =
  * content that never came. Empty categories are now a single quiet line at the
  * bottom, and each category that does hold something gets its own card.
  */
-function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate, onDeleted, onError }) {
+function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate, onArchive, onError }) {
   // One row at a time: two half-finished edits on screen is a way to save the
   // wrong one.
   const [editingId, setEditingId] = useState(null);
@@ -554,8 +597,7 @@ function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate, onDel
                       busy={busy}
                       onEdit={() => setEditingId(course.id)}
                       onDuplicate={() => onDuplicate(course)}
-                      onDeleted={onDeleted}
-                      onError={onError}
+                      onArchive={() => onArchive(course)}
                     />
                   )}
                 </li>
@@ -582,7 +624,132 @@ function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate, onDel
   );
 }
 
-function CourseRow({ course, busy, onEdit, onDuplicate, onDeleted, onError }) {
+/**
+ * Courses that have been retired.
+ *
+ * Kept on the same page as the live list rather than behind a separate screen:
+ * the archive is small, it is consulted rarely, and an administrator wondering
+ * "where did PM-101 go?" should find the answer where they last saw it, not by
+ * knowing there is another page to look on.
+ *
+ * Collapsed by default and absent entirely when nothing is archived, so it
+ * costs a working catalogue nothing.
+ */
+function ArchivedCourses({ courses, busy, onRestore, onDeleted, onError }) {
+  const [open, setOpen] = useState(false);
+
+  if (courses.length === 0) return null;
+
+  return (
+    <section>
+      <button
+        onClick={() => setOpen((shown) => !shown)}
+        className="flex items-center gap-2 text-sm font-semibold text-slate-700"
+      >
+        <span
+          className={`text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`}
+          aria-hidden
+        >
+          ›
+        </span>
+        Archived courses
+        <Badge tone="slate">{courses.length}</Badge>
+      </button>
+
+      <p className="mt-0.5 text-xs text-slate-500">
+        Retired, but nothing lost. Everything on them is intact — restore one and it comes back
+        exactly as it was. They are not offered to candidates and cannot be copied into a new
+        version.
+      </p>
+
+      {open && (
+        <Card flush className="mt-3 overflow-hidden">
+          <ul className="divide-y divide-slate-100">
+            {courses.map((course) => (
+              <li
+                key={course.id}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 py-3.5"
+              >
+                <div className="min-w-0">
+                  <span className="flex flex-wrap items-baseline gap-x-1.5">
+                    <span className="text-xs font-semibold tracking-wide text-slate-500">
+                      {course.code}
+                    </span>
+                    <span className="text-xs text-slate-400">v{course.version}</span>
+                    {course.category && (
+                      <Badge tone={toneForCategory(course.category)}>{course.category.name}</Badge>
+                    )}
+                  </span>
+                  <span className="block truncate font-medium text-slate-600">{course.title}</span>
+                  {/* What is inside it, which is the whole of "restore or
+                      delete?" — and who retired it, so the decision has an
+                      author to ask. */}
+                  <span className="mt-0.5 block text-xs text-slate-400">
+                    {plural(course._count.topics, 'topic')} ·{' '}
+                    {plural(course._count.enrollments, 'candidate')}
+                    {course.owner && ` · led by ${course.owner.fullName}`}
+                    {course.archivedBy && ` · archived by ${course.archivedBy.fullName}`}
+                    {course.archivedAt && ` on ${formatDate(course.archivedAt)}`}
+                  </span>
+                </div>
+
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <Button size="sm" disabled={busy} onClick={() => onRestore(course)}>
+                    Restore
+                  </Button>
+                  {/* Deleting lives here and nowhere else: a course must be
+                      retired before it can be destroyed, which turns the
+                      irreversible act into two deliberate ones. */}
+                  <DeleteCourse course={course} onDeleted={onDeleted} onError={onError} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The actions at the end of a course row, as one segmented control.
+ *
+ * Three separate outlined buttons were three competing objects in a 216px
+ * column: they did not fit, so "+ Version" broke onto two lines and left every
+ * row taller and raggedly aligned. Joined into a single bordered group they
+ * read as one control with three choices — which is what they are — and stay
+ * on one line.
+ *
+ * Colour carries the difference instead of borders: neutral for Edit, indigo
+ * for the one that creates something, amber for the one that retires it.
+ */
+const RowActions = ({ children }) => (
+  <span className="inline-flex divide-x divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    {children}
+  </span>
+);
+
+const ROW_ACTION_TONES = {
+  slate: 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+  indigo: 'text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700',
+  amber: 'text-slate-600 hover:bg-amber-50 hover:text-amber-700',
+};
+
+const RowAction = ({ tone = 'slate', disabled, onClick, title, children }) => (
+  <button
+    type="button"
+    disabled={disabled}
+    onClick={onClick}
+    title={title}
+    // whitespace-nowrap is the point: this column is fixed, and a label that
+    // wraps changes the height of the whole row.
+    className={`whitespace-nowrap px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${ROW_ACTION_TONES[tone]}`}
+  >
+    {children}
+  </button>
+);
+
+function CourseRow({ course, busy, onEdit, onDuplicate, onArchive }) {
   return (
     <div className={`${GRID} px-5 py-3.5 transition hover:bg-slate-50/70`}>
       <Link to={`/trainer/courses/${course.id}`} className="group min-w-0">
@@ -618,20 +785,32 @@ function CourseRow({ course, busy, onEdit, onDuplicate, onDeleted, onError }) {
         </Badge>
       </span>
 
-      <span className="flex justify-end gap-1.5">
-        <Button variant="secondary" size="sm" disabled={busy} onClick={onEdit}>
-          Edit
-        </Button>
-        <Button
-          variant="subtle"
-          size="sm"
-          disabled={busy}
-          onClick={onDuplicate}
-          title={`Copy into v${course.version + 1} and revise it there`}
-        >
-          + Version
-        </Button>
-        <DeleteCourse course={course} onDeleted={onDeleted} onError={onError} />
+      <span className="flex justify-end">
+        <RowActions>
+          <RowAction disabled={busy} onClick={onEdit} title="Change the code, title, duration or category">
+            Edit
+          </RowAction>
+          <RowAction
+            tone="indigo"
+            disabled={busy}
+            onClick={onDuplicate}
+            title={`Copy into v${course.version + 1} and revise it there`}
+          >
+            + Version
+          </RowAction>
+          {/* Archive, not delete. Retiring a course is the ordinary act and
+              must not destroy the results of everyone who took it; deleting is
+              still available, from the archive, for a course that should never
+              have existed. Amber on hover, not rose: this is reversible. */}
+          <RowAction
+            tone="amber"
+            disabled={busy}
+            onClick={onArchive}
+            title="Retire this course, keeping everything on it"
+          >
+            Archive
+          </RowAction>
+        </RowActions>
       </span>
     </div>
   );

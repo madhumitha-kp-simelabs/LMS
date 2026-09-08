@@ -1,14 +1,21 @@
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { openFile } from '../../lib/storage.js';
-import { createProjectSchema, evaluationSchema, updateProjectSchema } from './projects.schema.js';
+import {
+  allotProjectSchema,
+  createProjectSchema,
+  evaluationSchema,
+  updateProjectSchema,
+} from './projects.schema.js';
 import * as projects from './projects.service.js';
 
 const router = Router();
 const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-// Setting course work is staff territory. Allotting it is an admin's, and lives
-// on /api/admin; candidates see their own copies on /api/learn.
+// Setting course work and handing it out are both staff territory: the lead
+// does both on the course they run. The admin router keeps its own copies of
+// the allotment routes, which reach across every course. Candidates see their
+// own copies on /api/learn.
 router.use(requireAuth);
 
 /** Staff-only from here down; the file route below opts back out. */
@@ -26,12 +33,43 @@ router.get(
   }),
 );
 
-/** Every project on a course, with who holds each one. */
+/**
+ * Every project on a course, with who holds each one — and who else it could be
+ * given to, so the lead's screen can hand one out without a second request.
+ */
 router.get(
   '/courses/:courseId',
   staffOnly,
   handle(async (req, res) => {
-    res.json({ projects: await projects.listForCourse(req.user, req.params.courseId) });
+    const [list, candidates] = await Promise.all([
+      projects.listForCourse(req.user, req.params.courseId),
+      projects.allottableFor(req.user, req.params.courseId),
+    ]);
+    res.json({ projects: list, candidates });
+  }),
+);
+
+/**
+ * Hands a project to candidates on this course. The lead may do this for their
+ * own course's enrolled candidates; an admin may do it anywhere, from the admin
+ * router. The service decides which of those the caller is.
+ */
+router.post(
+  '/:projectId/allotments',
+  staffOnly,
+  handle(async (req, res) => {
+    const { candidateIds } = allotProjectSchema.parse(req.body);
+    res.status(201).json(await projects.allot(req.user, req.params.projectId, candidateIds));
+  }),
+);
+
+/** Takes it back off one candidate, losing whatever they handed in with it. */
+router.delete(
+  '/:projectId/allotments/:userId',
+  staffOnly,
+  handle(async (req, res) => {
+    await projects.withdraw(req.user, req.params.projectId, req.params.userId);
+    res.status(204).end();
   }),
 );
 

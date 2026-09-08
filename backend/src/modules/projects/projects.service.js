@@ -123,6 +123,39 @@ export async function listForCourse(user, courseId) {
   }));
 }
 
+/**
+ * The people a project on this course can be given to.
+ *
+ * Enrolled, still on this edition, and not staff on it — the same set the
+ * allotment check will accept, worked out once so the screen offers only names
+ * that will go through rather than letting a lead tick one and be refused.
+ */
+export async function allottableFor(user, courseId) {
+  await assertCourseRead(user, courseId);
+
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { ownerId: true, team: { select: { userId: true } } },
+  });
+  if (!course) throw new AppError(404, 'Course not found');
+
+  const staff = new Set([course.ownerId, ...course.team.map((t) => t.userId)]);
+
+  const enrolments = await prisma.enrollment.findMany({
+    where: {
+      courseId,
+      status: 'active',
+      supersededAt: null,
+      discontinuedAt: null,
+      user: { isActive: true, role: { in: ['candidate', 'lead'] } },
+    },
+    orderBy: { user: { fullName: 'asc' } },
+    select: { user: { select: { id: true, fullName: true, email: true } } },
+  });
+
+  return enrolments.map((e) => e.user).filter((u) => !staff.has(u.id));
+}
+
 export async function createProject(user, courseId, data) {
   await assertIsTheLead(user, courseId);
 
@@ -196,15 +229,68 @@ export async function deletionImpact(user, projectId) {
 }
 
 /**
- * Handing a project to candidates — an admin's call, not the lead's, so this is
- * only reached from the admin router.
+ * Who may hand this project out, and to whom.
+ *
+ * An admin may give it to anybody eligible, on any course. A lead may give it
+ * out on the course they run, but only to people already enrolled on it — they
+ * set the work, so they are the one who knows a candidate is ready for it, and
+ * waiting on an admin to relay that was a queue for no reason.
+ *
+ * The enrolment rule is what keeps a lead's reach to their own cohort: a lead
+ * cannot pull in somebody who never signed up for the course. Enrolments that
+ * ended are no good either — moved to a later version, stopped, or on a
+ * different edition entirely — because setting work on a course somebody has
+ * left is work nobody will ever see.
+ */
+async function assertMayAllot(user, project, candidateIds) {
+  if (user.role === 'admin') return;
+
+  await assertIsTheLead(
+    user,
+    project.courseId,
+    'Only a course’s lead hands out its projects',
+  );
+
+  const enrolled = await prisma.enrollment.findMany({
+    where: {
+      courseId: project.courseId,
+      userId: { in: candidateIds },
+      status: 'active',
+      supersededAt: null,
+      discontinuedAt: null,
+    },
+    select: { userId: true },
+  });
+
+  const has = new Set(enrolled.map((e) => e.userId));
+  const missing = [...new Set(candidateIds)].filter((id) => !has.has(id));
+  if (missing.length === 0) return;
+
+  // Named, not counted: "one of them is not enrolled" leaves the lead to work
+  // out which, from a list they just ticked.
+  const strangers = await prisma.user.findMany({
+    where: { id: { in: missing } },
+    select: { fullName: true },
+  });
+  const names = strangers.map((u) => u.fullName).join(', ');
+  throw new AppError(
+    422,
+    strangers.length === 1
+      ? `${names} is not enrolled on this course, so you cannot set them its work`
+      : `${names} are not enrolled on this course, so you cannot set them its work`,
+  );
+}
+
+/**
+ * Handing a project to candidates.
  *
  * Anyone already holding it is skipped rather than treated as an error: the
  * point of the screen is "these people should have it", and re-sending a name
  * should not undo somebody's progress.
  */
-export async function allot(admin, projectId, candidateIds) {
+export async function allot(user, projectId, candidateIds) {
   const project = await load(projectId);
+  await assertMayAllot(user, project, candidateIds);
 
   // Leads count as learners on courses they do not run, the same as they do
   // for topics. assertNotCourseStaff below is what stops one being set work on
@@ -224,7 +310,7 @@ export async function allot(admin, projectId, candidateIds) {
     data: candidates.map((c) => ({
       projectId,
       userId: c.id,
-      allottedBy: admin.id,
+      allottedBy: user.id,
     })),
     skipDuplicates: true,
   });
@@ -232,8 +318,19 @@ export async function allot(admin, projectId, candidateIds) {
   return { added: count, alreadyHad: candidates.length - count };
 }
 
-/** Takes a project back off one candidate, losing their done mark with it. */
-export async function withdraw(projectId, userId) {
+/**
+ * Takes a project back off one candidate, losing their done mark with it.
+ *
+ * Same reach as handing it out: an admin anywhere, a lead on their own course.
+ * Taking back is the more destructive half — it deletes whatever they handed
+ * in — so it must not be the looser check of the two.
+ */
+export async function withdraw(user, projectId, userId) {
+  const project = await load(projectId);
+  if (user.role !== 'admin') {
+    await assertIsTheLead(user, project.courseId, 'Only a course’s lead hands out its projects');
+  }
+
   const { count } = await prisma.projectAllotment.deleteMany({
     where: { projectId, userId },
   });
@@ -492,12 +589,15 @@ export async function listEverything(user) {
   }
 
   const projects = await prisma.project.findMany({
-    orderBy: [{ course: { code: 'asc' } }, { position: 'asc' }],
+    orderBy: [{ course: { code: 'asc' } }, { course: { version: 'asc' } }, { position: 'asc' }],
     include: {
       course: {
         select: {
           id: true,
           code: true,
+          // Two editions of one course share a code and a title, so without
+          // the version their work is indistinguishable on this screen.
+          version: true,
           title: true,
           isPublished: true,
           owner: { select: { id: true, fullName: true } },

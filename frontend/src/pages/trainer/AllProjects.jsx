@@ -86,7 +86,7 @@ export default function AllProjects() {
 
       // Title, brief and course together — you rarely remember which of the
       // three the word you are looking for was in.
-      return `${project.title} ${project.brief ?? ''} ${project.course.code} ${project.course.title}`
+      return `${project.title} ${project.brief ?? ''} ${project.course.code} v${project.course.version} ${project.course.title}`
         .toLowerCase()
         .includes(needle);
     });
@@ -215,7 +215,7 @@ function ProjectRow({ project, onDelete }) {
               to={`/trainer/courses/${course.id}/projects`}
               className="text-xs font-semibold tracking-wide text-indigo-600 hover:underline"
             >
-              {course.code}
+              {course.code} v{course.version}
             </Link>
             <span className="text-xs text-slate-500">{course.title}</span>
             {!course.isPublished && <Badge tone="slate">Draft course</Badge>}

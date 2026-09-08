@@ -4,7 +4,13 @@ import { requireAuth, requireRole } from '../../middleware/auth.js';
 import { AppError } from '../../middleware/error.js';
 // Imported by name, not as a namespace: the overview handler below has its own
 // local `courses`, and shadowing the module would be a trap waiting to happen.
-import { assertNotEnrolled, createCourseForLead } from '../courses/courses.service.js';
+import {
+  archiveCourse,
+  assertNotEnrolled,
+  createCourseForLead,
+  listArchivedCourses,
+  restoreCourse,
+} from '../courses/courses.service.js';
 import * as projects from '../projects/projects.service.js';
 import { allotProjectSchema } from '../projects/projects.schema.js';
 import {
@@ -477,9 +483,9 @@ router.get(
   '/projects',
   handle(async (req, res) => {
     const rows = await prisma.project.findMany({
-      orderBy: [{ course: { code: 'asc' } }, { position: 'asc' }],
+      orderBy: [{ course: { code: 'asc' } }, { course: { version: 'asc' } }, { position: 'asc' }],
       include: {
-        course: { select: { id: true, code: true, title: true, isPublished: true } },
+        course: { select: { id: true, code: true, version: true, title: true, isPublished: true } },
         allotments: {
           orderBy: { allottedAt: 'asc' },
           include: { user: { select: { id: true, fullName: true, email: true } } },
@@ -505,8 +511,42 @@ router.get(
 );
 
 /**
- * Hands a project to candidates. The lead writes the brief; who does it is the
- * admin's decision, which is why this lives here and not on /api/projects.
+ * The archive: courses that have been retired but not destroyed.
+ *
+ * Declared before /courses/:courseId/* so Express does not read "archived" as
+ * a course id.
+ */
+router.get(
+  '/courses/archived',
+  handle(async (req, res) => {
+    res.json({ courses: await listArchivedCourses(req.user) });
+  }),
+);
+
+/**
+ * Retiring a course. Nothing on it is touched — this is the thing an
+ * administrator does instead of deleting, and deleting is still there behind
+ * it for a course that should never have existed.
+ */
+router.post(
+  '/courses/:courseId/archive',
+  handle(async (req, res) => {
+    res.json({ course: await archiveCourse(req.user, req.params.courseId) });
+  }),
+);
+
+/** Putting one back, exactly as it was. */
+router.post(
+  '/courses/:courseId/restore',
+  handle(async (req, res) => {
+    res.json({ course: await restoreCourse(req.user, req.params.courseId) });
+  }),
+);
+
+/**
+ * Hands a project to candidates, on any course. The lead can do this too, for
+ * their own course's enrolled candidates, from /api/projects — this copy is the
+ * reach across every course, which is the admin's alone.
  */
 router.post(
   '/projects/:projectId/allotments',
@@ -521,7 +561,7 @@ router.post(
 router.delete(
   '/projects/:projectId/allotments/:userId',
   handle(async (req, res) => {
-    await projects.withdraw(req.params.projectId, req.params.userId);
+    await projects.withdraw(req.user, req.params.projectId, req.params.userId);
     res.status(204).end();
   }),
 );

@@ -5,7 +5,6 @@ import { useAuth } from '../../context/AuthContext';
 import QuizSection from './QuizSection';
 import JoinRequests from './JoinRequests';
 import CourseNav from './CourseNav';
-import CourseFeedbackPanel from './CourseFeedbackPanel';
 import {
   Alert,
   Badge,
@@ -13,6 +12,7 @@ import {
   Card,
   Empty,
   Input,
+  Modal,
   Textarea,
   formatBytes,
 } from '../../components/ui';
@@ -147,10 +147,6 @@ export default function CourseDetail() {
               : 'This course has no topics yet. The lead adds them and hands them out.'}
           </Empty>
         )}
-      </div>
-
-      <div className="mt-6">
-        <CourseFeedbackPanel courseId={course.id} onError={setError} />
       </div>
     </div>
   );
@@ -314,6 +310,9 @@ function CourseDuration({ course, onChanged, onError }) {
  */
 function PublishToggle({ course, leads, onChanged, onError }) {
   const [busy, setBusy] = useState(false);
+  // Shown instead of a browser alert, which cannot be styled, blocks the tab,
+  // and looks like it belongs to the browser rather than to this course.
+  const [asking, setAsking] = useState(false);
 
   // A team trainer sees where the course stands and who to ask, but no button.
   if (!leads) {
@@ -328,6 +327,18 @@ function PublishToggle({ course, leads, onChanged, onError }) {
   }
 
   async function toggle() {
+    /**
+     * Stopped here, before the request, so the answer arrives the moment the
+     * button is pressed rather than after a round trip.
+     *
+     * The server refuses this too, and that refusal is the one that actually
+     * enforces the rule — this is only the earlier, plainer telling of it.
+     */
+    if (!course.isPublished && !course.durationWeeks) {
+      setAsking(true);
+      return;
+    }
+
     setBusy(true);
     try {
       await api(`/courses/${course.id}`, {
@@ -343,14 +354,47 @@ function PublishToggle({ course, leads, onChanged, onError }) {
   }
 
   return (
+    // The Published/Draft badge beside the course title already says where the
+    // course stands, so repeating it in words next to the button was the same
+    // fact twice.
     <div className="flex shrink-0 items-center gap-3">
-      {/* The status badge lives beside the course title; this is only the action. */}
-      <p className="whitespace-nowrap text-xs text-slate-500">
-        {course.isPublished ? 'Visible to candidates' : 'Hidden from candidates'}
-      </p>
+      {/* A course with no duration cannot be published. The button stays live;
+          pressing it opens the dialog below. The server refuses it as well, and
+          that refusal is what actually enforces the rule. */}
       <Button variant="secondary" onClick={toggle} disabled={busy}>
         {busy ? '…' : course.isPublished ? 'Unpublish' : 'Publish'}
       </Button>
+
+      <Modal
+        open={asking}
+        title="Add a duration first"
+        onClose={() => setAsking(false)}
+      >
+        <div className="space-y-4">
+          <p className="text-sm leading-relaxed text-slate-600">
+            <span className="font-medium text-slate-900">
+              {course.code} v{course.version}
+            </span>{' '}
+            has no duration set, so it cannot be published yet.
+          </p>
+          {/* Says what goes wrong, not just that it is disallowed: a rule with
+              its reason beside it is one somebody can agree with. */}
+          <p className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-900">
+            Publishing lets candidates join, and joining is what stamps their end
+            date from the course’s length. With no length, nobody on it would ever
+            get one — they would sit outside the schedule, never counted as running
+            late and never reachable by an extension.
+          </p>
+          <p className="text-sm text-slate-600">
+            Use <span className="font-medium text-slate-900">Edit</span> beside the course
+            title to set how many weeks it runs, then publish.
+          </p>
+
+          <div className="flex justify-end border-t border-slate-100 pt-4">
+            <Button onClick={() => setAsking(false)}>Got it</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

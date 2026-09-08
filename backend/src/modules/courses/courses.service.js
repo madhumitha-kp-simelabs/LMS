@@ -146,7 +146,10 @@ export async function listCourses(user) {
       : { OR: [{ ownerId: user.id }, { team: { some: { userId: user.id } } }] };
 
   const courses = await prisma.course.findMany({
-    where,
+    // Archived courses are off this list for everybody, admins included. It is
+    // the list of what is being taught; a retired course belongs on the
+    // archive screen, where the only things offered are restore and delete.
+    where: { ...where, archivedAt: null },
     orderBy: { createdAt: 'desc' },
     include: {
       owner: { select: { id: true, fullName: true } },
@@ -272,6 +275,29 @@ export async function updateCourse(user, courseId, data) {
   // against whatever the other half will be once this save lands.
   if (data.code || data.version) {
     await assertCodeFree(data.code ?? course.code, data.version ?? course.version, courseId);
+  }
+
+  /**
+   * A course cannot be published without a duration.
+   *
+   * Publishing is the moment candidates can join, and joining is what stamps a
+   * deadline from the course's length. With no length there is no deadline —
+   * not a late one, none at all — so nobody is ever flagged as running over,
+   * the overdue queue never sees them, and extensions have no date to extend.
+   * A whole cohort can be quietly outside the schedule, and the only sign is an
+   * empty column that reads like a rendering fault rather than a missing fact.
+   *
+   * Checked against what the record will be after this save, not what it is
+   * now: setting the duration and publishing in one submission is the ordinary
+   * way to do it and must not be refused.
+   */
+  const publishing = data.isPublished === true && !course.isPublished;
+  const durationAfter = data.durationWeeks === undefined ? course.durationWeeks : data.durationWeeks;
+  if (publishing && !durationAfter) {
+    throw new AppError(
+      422,
+      `${course.code} v${course.version} needs a duration before it can be published — without one nobody on it gets an end date.`,
+    );
   }
 
   const updated = await prisma.course.update({ where: { id: courseId }, data });
@@ -642,9 +668,16 @@ export async function assignTopicDuties(user, topicId, duties) {
  * The point of versioning by copy is that both editions run at once: the cohort
  * part-way through v1 keeps the material they started on, while v2 is revised
  * and taught alongside. So this brings across everything that describes the
- * course — topics, material, quizzes with their questions, project briefs —
- * and none of the people: no enrolments, no allotments, no attempts, no
- * feedback. Those belong to the edition they happened on.
+ * course — topics, material, quizzes with their questions — and none of the
+ * people: no enrolments, no allotments, no attempts, no feedback. Those belong
+ * to the edition they happened on.
+ *
+ * Projects are not copied either. A brief is set for a cohort, not for a
+ * syllabus: it is written against what that intake is ready for and carries its
+ * own deadline. Copying one forward produced an unallotted duplicate on every
+ * new version that a lead had to notice and delete, and two identical cards
+ * side by side made it unclear which edition's work anybody was looking at. A
+ * lead who does want the same brief again can write it on the new version.
  *
  * The copy starts as a draft whatever the original was. A new version appearing
  * in front of candidates the instant it is created, before anybody has revised
@@ -664,10 +697,19 @@ export async function duplicateCourse(user, courseId) {
           quiz: { include: { questions: { include: { options: true } } } },
         },
       },
-      projects: { orderBy: { position: 'asc' } },
     },
   });
   if (!source) throw new AppError(404, 'Course not found');
+
+  // A retired course is not a base to build the next edition on. Versioning it
+  // would produce a live draft descended from something the organisation has
+  // decided to stop teaching, with nothing on screen to say so.
+  if (source.archivedAt) {
+    throw new AppError(
+      409,
+      `${source.code} v${source.version} is archived, so it cannot be copied into a new version. Restore it first if this edition is the one to build on.`,
+    );
+  }
 
   // Anyone who may edit the course may version it — it is the same act of
   // authorship, and the copy is a draft nobody can see yet.
@@ -770,27 +812,108 @@ export async function duplicateCourse(user, courseId) {
       }
     }
 
-    if (source.projects.length > 0) {
-      await tx.project.createMany({
-        data: source.projects.map((project) => ({
-          courseId: copy.id,
-          position: project.position,
-          title: project.title,
-          brief: project.brief,
-          // Deadlines are per cohort, and this cohort has not started.
-          dueAt: null,
-        })),
-      });
-    }
-
     return {
       ...copy,
       copied: {
         topics: source.topics.length,
         materials: source.topics.reduce((n, t) => n + t.materials.length, 0),
         quizzes: source.topics.filter((t) => t.quiz).length,
-        projects: source.projects.length,
       },
     };
   });
+}
+
+/**
+ * Retiring a course, and bringing one back.
+ *
+ * This is what an administrator reaches for instead of deleting. Deleting a
+ * course destroys every result on it, and "we do not run this any more" is
+ * almost never a reason to destroy what the people who did run it earned.
+ * Archiving keeps all of it and takes the course out of circulation instead.
+ *
+ * Nothing about the course itself changes — not isPublished, not the team, not
+ * the enrolments. Only a date is set, and every listing reads it. That is what
+ * makes restoring exact rather than a reconstruction.
+ */
+export async function archiveCourse(user, courseId) {
+  if (user.role !== 'admin') {
+    throw new AppError(403, 'Only an administrator can archive a course');
+  }
+
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { id: true, code: true, version: true, archivedAt: true },
+  });
+  if (!course) throw new AppError(404, 'Course not found');
+  if (course.archivedAt) {
+    throw new AppError(409, `${course.code} v${course.version} is already archived`);
+  }
+
+  // Said plainly on the way out, because the count is the thing an admin needs
+  // to know they are doing: archiving takes the course away from live people.
+  const active = await prisma.enrollment.count({
+    where: {
+      courseId,
+      status: 'active',
+      completedAt: null,
+      supersededAt: null,
+      discontinuedAt: null,
+    },
+  });
+
+  const updated = await prisma.course.update({
+    where: { id: courseId },
+    data: { archivedAt: new Date(), archivedById: user.id },
+    select: { id: true, code: true, version: true, title: true, archivedAt: true },
+  });
+
+  return { ...updated, activeCandidates: active };
+}
+
+/** Puts an archived course back, exactly as it was. */
+export async function restoreCourse(user, courseId) {
+  if (user.role !== 'admin') {
+    throw new AppError(403, 'Only an administrator can restore a course');
+  }
+
+  const course = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { id: true, code: true, version: true, archivedAt: true },
+  });
+  if (!course) throw new AppError(404, 'Course not found');
+  if (!course.archivedAt) {
+    throw new AppError(409, `${course.code} v${course.version} is not archived`);
+  }
+
+  return prisma.course.update({
+    where: { id: courseId },
+    data: { archivedAt: null, archivedById: null },
+    select: { id: true, code: true, version: true, title: true, isPublished: true },
+  });
+}
+
+/**
+ * The archive: what has been retired, when, and by whom.
+ *
+ * Carries the same counts as the live list. An administrator deciding whether
+ * to restore or finally delete one needs to know what is inside it, and
+ * "3 topics, 12 candidates" is the whole of that question.
+ */
+export async function listArchivedCourses(user) {
+  if (user.role !== 'admin') {
+    throw new AppError(403, 'Only an administrator can see the archive');
+  }
+
+  const courses = await prisma.course.findMany({
+    where: { archivedAt: { not: null } },
+    orderBy: { archivedAt: 'desc' },
+    include: {
+      owner: { select: { id: true, fullName: true } },
+      archivedBy: { select: { id: true, fullName: true } },
+      category: { select: { id: true, name: true, slug: true, position: true } },
+      _count: { select: { topics: true, enrollments: true, team: true } },
+    },
+  });
+
+  return courses.map((course) => ({ ...course, relation: null, myTopics: 0 }));
 }

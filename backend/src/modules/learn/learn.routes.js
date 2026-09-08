@@ -325,15 +325,15 @@ router.get(
   handle(async (req, res) => {
     const [courses, enrollments] = await Promise.all([
       prisma.course.findMany({
-        // Everything published, the reader's own courses included. This once
-        // filtered those out on the grounds that enrolling on them is refused
-        // anyway — but that mistook the page for an enrolment form. It is the
-        // organisation's catalogue, and a lead asking "what do we teach?"
-        // should not get an answer with their own course missing from it.
-        //
-        // What changes for those rows is the button, not the listing: `staff`
-        // below tells the screen to show where they stand instead.
-        where: { isPublished: true },
+        // Everything published. Courses the reader leads are dropped after
+        // the mapping below rather than here, so that the newest-version map is
+        // still built from the full set: if a lead ran the current edition of a
+        // course, filtering it out this early would leave the older editions
+        // claiming to be current.
+        // Archived courses are not offered. They keep everything and stay
+        // readable to the people already on them; they simply stop appearing
+        // as something to take up.
+        where: { isPublished: true, archivedAt: null },
         orderBy: { title: 'asc' },
         select: {
           id: true,
@@ -440,7 +440,13 @@ router.get(
         newerVersion:
           newest.get(course.code) > course.version ? newest.get(course.code) : null,
         allottedTopics: allottedCount.get(course.id) ?? 0,
-      })),
+      }))
+        // A lead has no business browsing their own course: they cannot enrol
+        // on it, and the card's only offer was a link back to the course pages
+        // they already work from. Courses they are a trainer on stay — being on
+        // someone else's team is not the same as running it, and seeing it
+        // listed tells them what the rest of the cohort is being offered.
+        .filter((course) => course.staff !== 'lead'),
     });
   }),
 );
@@ -568,6 +574,12 @@ router.post(
     });
     if (!course) throw new AppError(404, 'Course not found');
 
+    // The catalogue no longer lists it, but this endpoint is still reachable —
+    // a stale tab, or a link somebody kept.
+    if (course.archivedAt) {
+      throw new AppError(409, `${course.code} v${course.version} is no longer being taught`);
+    }
+
     // Says "you lead this" rather than letting the request sit in an inbox the
     // requester is the one who reads.
     await assertNotCourseStaff(course.id, [req.user.id]);
@@ -581,7 +593,12 @@ router.post(
      * untouched — this only governs joining it in the first place.
      */
     const newer = await prisma.course.findFirst({
-      where: { code: course.code, version: { gt: course.version }, isPublished: true },
+      where: {
+        code: course.code,
+        version: { gt: course.version },
+        isPublished: true,
+        archivedAt: null,
+      },
       orderBy: { version: 'desc' },
       select: { version: true },
     });

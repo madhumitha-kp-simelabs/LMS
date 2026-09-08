@@ -18,11 +18,11 @@ import PauseCandidate from '../../components/PauseCandidate';
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
- * Day and month only, for the standing badges.
+ * Day and month only, for the date columns.
  *
  * A column of dates all in the same year does not need the year repeated on
- * every row, and "Started 14 Aug 2026" is wide enough to push the score column
- * off the end. The full date is still on the expanded panel.
+ * every row, and the full width would push the score column off the end. The
+ * complete date is still on the expanded panel below.
  */
 const shortDate = (value) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
@@ -47,7 +47,7 @@ const standingOf = (row) => {
  * six people into six independent objects with nothing aligned between them.
  */
 const GRID =
-  'grid grid-cols-[minmax(0,1fr)_150px_92px_minmax(0,168px)_64px_28px] items-center gap-x-4';
+  'grid grid-cols-[minmax(0,1fr)_140px_60px_78px_78px_minmax(0,132px)_58px_24px] items-center gap-x-3';
 
 const STANDINGS = {
   needsWork: 'Needs help',
@@ -93,7 +93,7 @@ export default function AllProgress() {
       if (courseId && row.course.id !== courseId) return false;
       if (standing && standingOf(row) !== standing) return false;
       if (!needle) return true;
-      return `${row.fullName} ${row.email} ${row.course.code} ${row.course.title}`
+      return `${row.fullName} ${row.email} ${row.course.code} v${row.course.version} ${row.course.title}`
         .toLowerCase()
         .includes(needle);
     });
@@ -187,7 +187,7 @@ export default function AllProgress() {
                   <option value="">Every course</option>
                   {(data.courses ?? []).map((course) => (
                     <option key={course.id} value={course.id}>
-                      {course.code} ({course.candidates})
+                      {course.code} v{course.version} ({course.candidates})
                     </option>
                   ))}
                 </Select>
@@ -195,7 +195,7 @@ export default function AllProgress() {
 
               <div className="w-44">
                 <Select value={standing} onChange={(event) => setStanding(event.target.value)}>
-                  <option value="">Any standing</option>
+                  <option value="">Status</option>
                   {Object.entries(STANDINGS).map(([value, label]) => (
                     <option key={value} value={value}>
                       {label} ({counts[value] ?? 0})
@@ -237,7 +237,9 @@ export default function AllProgress() {
                   <span>Candidate</span>
                   <span>Course</span>
                   <span className="text-right">Quizzes</span>
-                  <span>Standing</span>
+                  <span>Started</span>
+                  <span>End</span>
+                  <span>Status</span>
                   <span className="text-right">Score</span>
                   <span />
                 </div>
@@ -315,12 +317,58 @@ function Row({ row, open, onToggle, onChanged, onError }) {
   const [reviewing, setReviewing] = useState(null);
   const standing = standingOf(row);
 
+  // Dates used to be folded into this badge — "Started 14 Aug", "Done 2 Sep".
+  // They have columns of their own now, so the status says only what the
+  // status is, and the dates line up down the page where they can be compared.
   const badge = {
     needsWork: { tone: 'rose', label: `Needs help · ${row.needsWork.length}` },
-    completed: { tone: 'green', label: `Done ${shortDate(row.completedAt)}` },
-    inProgress: { tone: 'indigo', label: `Started ${shortDate(row.startedAt)}` },
+    completed: { tone: 'green', label: 'Completed' },
+    inProgress: { tone: 'indigo', label: 'In progress' },
     notStarted: { tone: 'slate', label: 'Not started' },
   }[standing];
+
+  /**
+   * When the course ends for this person: the day they finished if they have,
+   * otherwise the day they are due to.
+   *
+   * One column rather than two, because only one of the pair is ever the
+   * answer — a finished course has no deadline left to meet, and an unfinished
+   * one has no finish date to show. The tone says which it is: green for done,
+   * rose for a deadline already missed, plain for one still ahead.
+   */
+  // endsAt, not dueAt: the server has already added the days of a pause that is
+  // still running, which dueAt only picks up when the pause ends.
+  const due = row.endsAt ?? row.dueAt;
+  const paused = Boolean(row.pausedAt);
+  const overdue = !row.completedAt && !paused && due && new Date(due) < new Date();
+
+  const ending = row.completedAt
+    ? { date: row.completedAt, className: 'text-emerald-700', title: 'Finished' }
+    : due
+      ? {
+          date: due,
+          className: paused
+            ? 'text-slate-400'
+            : overdue
+              ? 'font-medium text-rose-700'
+              : 'text-slate-600',
+          // A paused candidate is not late, and their date is still moving —
+          // saying so is the difference between "behind" and "on hold".
+          title: paused
+            ? `Paused — the clock is stopped, so this date moves with it${
+                row.pausedDays > 0 ? ` (${row.pausedDays} days already added)` : ''
+              }`
+            : overdue
+              ? 'Was due — still running'
+              : 'Due',
+        }
+      : {
+          date: null,
+          className: 'text-slate-400',
+          title: row.startedAt
+            ? 'This course has no duration set, so there is no end date'
+            : 'The clock starts when they open their first topic',
+        };
 
   return (
     <>
@@ -349,13 +397,27 @@ function Row({ row, open, onToggle, onChanged, onError }) {
 
         <span className="min-w-0">
           <span className="block text-xs font-semibold tracking-wide text-indigo-600">
-            {row.course.code}
+            {row.course.code} <span className="text-slate-400">v{row.course.version}</span>
           </span>
           <span className="block truncate text-xs text-slate-500">{row.course.title}</span>
         </span>
 
         <span className="text-right text-sm tabular-nums text-slate-600">
           {row.quizzesDone}/{row.quizzesAvailable}
+        </span>
+
+        {/* Tabular figures so the two date columns read as columns rather than
+            as ragged text set at slightly different widths. */}
+        <span
+          className="text-xs tabular-nums text-slate-600"
+          title={row.startedAt ? 'Opened their first topic' : 'Has not opened a topic yet'}
+        >
+          {shortDate(row.startedAt)}
+        </span>
+
+        <span className={`text-xs tabular-nums ${ending.className}`} title={ending.title}>
+          {shortDate(ending.date)}
+          {paused && <span className="ml-1 not-italic text-slate-400">⏸</span>}
         </span>
 
         <span className="min-w-0">
@@ -404,7 +466,7 @@ function Row({ row, open, onToggle, onChanged, onError }) {
               to={`/trainer/courses/${row.course.id}/progress`}
               className="text-xs text-indigo-600 underline hover:text-indigo-700"
             >
-              Open {row.course.code} progress
+              Open {row.course.code} v{row.course.version} progress
             </Link>
           </div>
 

@@ -116,6 +116,7 @@ model User {
   coursesOwned     Course[]           @relation("CourseOwner")
   courseTeams      CourseTrainer[]    @relation("TrainerOnCourse")
   materialsAdded   Material[]         @relation("MaterialUploader")
+  coursesArchived  Course[]           @relation("CourseArchiver")
   materialDuties   Topic[]            @relation("TopicMaterialDuty")
   quizDuties       Topic[]            @relation("TopicQuizDuty")
   enrollments      Enrollment[]
@@ -172,6 +173,22 @@ model Course {
   // candidates what they are committing to, and to flag those running over.
   durationWeeks Int?
   isPublished   Boolean  @default(false)
+  /**
+   * Set when an administrator retires the course.
+   *
+   * Archiving is not deleting and is not unpublishing. Everything stays — the
+   * topics, the material, every result and who earned it — and the course
+   * simply stops being offered: it leaves the catalogue and the working lists,
+   * nobody new can join, and it cannot be copied into a new version. Restoring
+   * it puts it back exactly as it was, which is the whole point of having this
+   * instead of a delete button.
+   *
+   * Deliberately separate from isPublished. Unpublishing means "not ready
+   * yet"; archiving means "we do not teach this any more", and a course that
+   * came back from the archive should return to whichever of those it was.
+   */
+  archivedAt    DateTime?
+  archivedById  String?
   // Null until an admin allots the course to a trainer. Admins create courses
   // as a code and a title; who runs it is a separate decision, made later on
   // the allotment screen.
@@ -185,6 +202,9 @@ model Course {
   categoryId String?
 
   owner       User?            @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  // SetNull, not Cascade: an administrator leaving must not take the courses
+  // they archived with them.
+  archivedBy  User?            @relation("CourseArchiver", fields: [archivedById], references: [id], onDelete: SetNull)
   category    Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   team        CourseTrainer[]
   topics      Topic[]
@@ -198,6 +218,7 @@ model Course {
 
   @@unique([code, version])
   @@index([ownerId])
+  @@index([archivedAt])
   @@index([categoryId])
   @@map("courses")
 }

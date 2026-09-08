@@ -15,14 +15,18 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const asDateInput = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '');
 
 /**
- * The practical work set on a course. The lead writes these; who does them is
- * the administrator's decision, so this page shows who holds each one but
- * cannot change it.
+ * The practical work set on a course.
+ *
+ * The lead both writes these and hands them to the candidates on their course.
+ * They set the work, so they are the one who knows somebody is ready for it —
+ * routing that through an administrator was a queue with nothing in it. An
+ * admin's reach is wider, across every course, and lives on their own screen.
  */
 export default function CourseProjects() {
   const { courseId } = useParams();
   const [course, setCourse] = useState(null);
   const [projects, setProjects] = useState(null);
+  const [candidates, setCandidates] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -30,8 +34,9 @@ export default function CourseProjects() {
   const load = useCallback(
     () =>
       Promise.all([api(`/projects/courses/${courseId}`), api(`/courses/${courseId}`)])
-        .then(([{ projects }, { course }]) => {
+        .then(([{ projects, candidates }, { course }]) => {
           setProjects(projects);
+          setCandidates(candidates ?? []);
           setCourse(course);
         })
         .catch((err) => setError(err.message)),
@@ -68,6 +73,14 @@ export default function CourseProjects() {
 
   const remove = (project) =>
     run(() => api(`/projects/${project.id}`, { method: 'DELETE' }));
+
+  const allot = (project, candidateIds) =>
+    run(() =>
+      api(`/projects/${project.id}/allotments`, { method: 'POST', body: { candidateIds } }),
+    );
+
+  const takeBack = (project, candidateId) =>
+    run(() => api(`/projects/${project.id}/allotments/${candidateId}`, { method: 'DELETE' }));
 
   if (!projects && !error) return <p className="text-sm text-slate-500">Loading projects…</p>;
 
@@ -116,7 +129,7 @@ export default function CourseProjects() {
 
       <p className="mt-3 max-w-2xl text-sm text-slate-500">
         {isLead
-          ? 'Set the practical work for this course. An administrator decides who does each one.'
+          ? 'Set the practical work for this course, and hand it to the candidates on it.'
           : 'The practical work set on this course. Only its lead can change them.'}
       </p>
 
@@ -138,8 +151,8 @@ export default function CourseProjects() {
 
         {isAdmin && (
           <Alert tone="indigo">
-            {course?.owner?.fullName ?? 'This course’s lead'} writes these briefs. Handing them to
-            candidates is your half — do that from{' '}
+            {course?.owner?.fullName ?? 'This course’s lead'} writes these briefs and hands them
+            to their own candidates. To give one to somebody from anywhere, use{' '}
             <Link to="/admin/projects" className="font-medium underline">
               Projects
             </Link>
@@ -152,7 +165,7 @@ export default function CourseProjects() {
         {projects?.length === 0 ? (
           <Empty>
             {isLead
-              ? 'No projects yet. Add one and an administrator can hand it out.'
+              ? 'No projects yet. Add one, then hand it to the candidates on this course.'
               : 'No projects have been set on this course yet.'}
           </Empty>
         ) : (
@@ -161,9 +174,12 @@ export default function CourseProjects() {
               key={project.id}
               project={project}
               isLead={isLead}
+              candidates={candidates}
               busy={busy}
               onUpdate={update}
               onRemove={remove}
+              onAllot={allot}
+              onTakeBack={takeBack}
               onError={setError}
             />
           ))
@@ -173,7 +189,17 @@ export default function CourseProjects() {
   );
 }
 
-function ProjectRow({ project, isLead, busy, onUpdate, onRemove, onError }) {
+function ProjectRow({
+  project,
+  isLead,
+  candidates,
+  busy,
+  onUpdate,
+  onRemove,
+  onAllot,
+  onTakeBack,
+  onError,
+}) {
   const [editing, setEditing] = useState(false);
 
   if (editing) {
@@ -241,7 +267,9 @@ function ProjectRow({ project, isLead, busy, onUpdate, onRemove, onError }) {
       <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-3 pl-16">
         {project.allotted === 0 ? (
           <p className="text-xs text-amber-700">
-            Not given to anyone yet — an administrator hands projects out.
+            {isLead
+              ? 'Not given to anyone yet.'
+              : 'Not given to anyone yet — the course lead hands projects out.'}
           </p>
         ) : (
           <>
@@ -285,13 +313,133 @@ function ProjectRow({ project, isLead, busy, onUpdate, onRemove, onError }) {
                   />
 
                   <Mark evaluation={candidate.evaluation} handedIn={candidate.submission.submittedAt} />
+
+                  {isLead && (
+                    <button
+                      disabled={busy}
+                      onClick={() => {
+                        const warning = candidate.submission.submittedAt
+                          ? `Take this project back off ${candidate.fullName}? What they handed in goes with it.`
+                          : `Take this project back off ${candidate.fullName}?`;
+                        if (window.confirm(warning)) onTakeBack(project, candidate.id);
+                      }}
+                      className="ml-auto text-xs text-slate-400 underline transition hover:text-rose-600 disabled:opacity-50"
+                    >
+                      Take back
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
           </>
         )}
+
+        {isLead && (
+          <GiveOut
+            project={project}
+            candidates={candidates}
+            busy={busy}
+            onAllot={onAllot}
+          />
+        )}
       </div>
     </Card>
+  );
+}
+
+/**
+ * Handing one project to the people on the course.
+ *
+ * Only candidates enrolled on this course are offered, and only those who do
+ * not already hold it — the server refuses anybody else, and a list that lets
+ * you tick a name it will then reject is worse than one that never showed it.
+ *
+ * Collapsed until asked for. A lead reading down the page is usually checking
+ * on work already running, not setting more of it, and a permanently open list
+ * of names under every project buries the progress that is the point.
+ */
+function GiveOut({ project, candidates, busy, onAllot }) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState([]);
+
+  const holding = new Set(project.candidates.map((c) => c.id));
+  const spare = candidates.filter((c) => !holding.has(c.id));
+
+  const toggle = (id) =>
+    setPicked((chosen) =>
+      chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id],
+    );
+
+  // Nobody left to give it to, so say which of the two reasons it is.
+  if (spare.length === 0) {
+    return (
+      <p className="mt-2 text-xs text-slate-400">
+        {candidates.length === 0
+          ? 'Nobody is enrolled on this course yet.'
+          : 'Everyone on this course already has this project.'}
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-2 text-xs font-medium text-indigo-600 underline transition hover:text-indigo-700"
+      >
+        Give this to someone ({spare.length} {spare.length === 1 ? 'candidate' : 'candidates'})
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
+      <p className="text-xs font-medium text-slate-700">Give this project to:</p>
+
+      <ul className="mt-2 space-y-1">
+        {spare.map((candidate) => (
+          <li key={candidate.id}>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={picked.includes(candidate.id)}
+                onChange={() => toggle(candidate.id)}
+                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600"
+              />
+              {candidate.fullName}
+              <span className="text-xs text-slate-400">{candidate.email}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
+        <Button
+          size="sm"
+          disabled={busy || picked.length === 0}
+          onClick={async () => {
+            const given = await onAllot(project, picked);
+            if (given) {
+              setPicked([]);
+              setOpen(false);
+            }
+          }}
+        >
+          {busy ? 'Giving…' : `Give to ${picked.length || 'nobody'}`}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={busy}
+          onClick={() => {
+            setPicked([]);
+            setOpen(false);
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 

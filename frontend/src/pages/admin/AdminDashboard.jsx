@@ -691,7 +691,7 @@ function CandidateTable({
 
         <div className="w-48">
           <Select value={standing} onChange={(event) => setStanding(event.target.value)}>
-            <option value="">Any standing</option>
+            <option value="">Status</option>
             {Object.entries(STANDINGS).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}

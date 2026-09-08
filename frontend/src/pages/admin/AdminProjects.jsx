@@ -172,7 +172,7 @@ export default function AdminProjects() {
               <section key={course.id}>
                 <div className="flex flex-wrap items-baseline gap-x-3">
                   <span className="text-xs font-semibold tracking-wide text-indigo-600">
-                    {course.code}
+                    {course.code} v{course.version}
                   </span>
                   <h2 className="text-lg font-semibold text-slate-900">{course.title}</h2>
                   {!course.isPublished && <Badge tone="amber">Draft course</Badge>}
