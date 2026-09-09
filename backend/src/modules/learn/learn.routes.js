@@ -346,7 +346,12 @@ router.get(
           owner: { select: { fullName: true } },
           category: { select: { id: true, name: true, slug: true, position: true } },
           team: { where: { userId: req.user.id }, select: { userId: true } },
-          _count: { select: { topics: true } },
+          // Published topics only. Counting drafts told a candidate the course
+          // had a topic while the screen also told them nothing had been
+          // shared — which reads as being denied something, when the truth is
+          // there is nothing to give yet. A course whose topics are all drafts
+          // honestly has none to offer.
+          _count: { select: { topics: { where: { isPublished: true } } } },
         },
       }),
       prisma.enrollment.findMany({
@@ -406,8 +411,11 @@ router.get(
       where: { userId: req.user.id },
     });
     const allottedTopicIds = new Set(allotted.map((a) => a.topicId));
+    // Published only, matching the count beside it. A topic allotted and then
+    // unpublished is not openable, and counting it produced "Open 1 of 0
+    // topics" the moment the total started excluding drafts.
     const topicsPerCourse = await prisma.topic.findMany({
-      where: { id: { in: [...allottedTopicIds] } },
+      where: { id: { in: [...allottedTopicIds] }, isPublished: true },
       select: { id: true, courseId: true },
     });
     const allottedCount = new Map();

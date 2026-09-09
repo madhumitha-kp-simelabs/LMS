@@ -50,7 +50,7 @@ const standingOf = (row) => {
  * six people into six independent objects with nothing aligned between them.
  */
 const GRID =
-  'grid grid-cols-[minmax(0,1fr)_140px_60px_78px_78px_minmax(0,132px)_58px_24px] items-center gap-x-3';
+  'grid grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_56px_72px_72px_116px_54px_20px] items-center gap-x-3';
 
 const STANDINGS = {
   needsWork: 'Needs help',

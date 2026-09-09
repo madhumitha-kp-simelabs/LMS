@@ -85,7 +85,6 @@ export default function AllFeedback() {
 
   const { summary, courses = [] } = data ?? {};
   const filtering = Boolean(query.trim() || courseId || band);
-  const unrated = courses.filter((course) => course.count === 0);
 
   /**
    * The headline describes whatever is on screen.
@@ -224,16 +223,6 @@ export default function AllFeedback() {
                   <Entry key={entry.id} entry={entry} />
                 ))}
               </ul>
-            )}
-
-            {unrated.length > 0 && !filtering && (
-              <p className="text-xs text-slate-500">
-                Nothing said yet about{' '}
-                <span className="font-medium text-slate-600">
-                  {unrated.map((course) => `${course.code} v${course.version}`).join(' · ')}
-                </span>
-                .
-              </p>
             )}
           </>
         )}

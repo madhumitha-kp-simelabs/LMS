@@ -113,7 +113,9 @@ export default function CourseDetail() {
         <div className="mt-4">
           <JoinRequests
             courseId={course.id}
-            topicCount={course.topics.length}
+            // Published only: approving allots the published topics, so
+            // counting drafts here promises access that will not arrive.
+            topicCount={course.topics.filter((topic) => topic.isPublished).length}
             onChanged={load}
             onError={setError}
           />

@@ -51,8 +51,20 @@ export default function JoinRequests({ courseId, topicCount, onChanged, onError 
         <Badge tone="amber">{requests.length}</Badge>
       </div>
       <p className="mt-1 text-sm text-slate-500">
-        Approving gives access to all {topicCount} topic{topicCount === 1 ? '' : 's'} in this
-        course. You can adjust it per topic afterwards.
+        {topicCount === 0 ? (
+          // Worth saying outright: approving somebody onto a course with
+          // nothing published leaves them enrolled and staring at an empty
+          // page, which looks broken from their side.
+          <>
+            Nothing is published yet, so approving enrols them without giving them anything to
+            open. Publish a topic and they get it automatically.
+          </>
+        ) : (
+          <>
+            Approving gives access to all {topicCount} published topic
+            {topicCount === 1 ? '' : 's'} in this course. You can adjust it per topic afterwards.
+          </>
+        )}
       </p>
 
       <ul className="mt-3 space-y-2">
