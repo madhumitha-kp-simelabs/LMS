@@ -226,6 +226,27 @@ export function Badge({ children, tone = 'slate' }) {
   );
 }
 
+/**
+ * 1st, 2nd, 3rd, 4th — including the 11th–13th exception, which is the one
+ * every naive version of this gets wrong.
+ */
+export function ordinal(n) {
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  return `${n}${teen ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+}
+
+/**
+ * A candidate's percentile spelled out.
+ *
+ * "72nd" on its own invites "of what?", so the label names the cohort. Null
+ * when there is nobody to rank against — one person is not a distribution.
+ */
+export function percentileLabel(n) {
+  return n === null || n === undefined
+    ? null
+    : `${ordinal(n)} percentile of this course's cohort`;
+}
+
 /** Score colour by band — used for percentages anywhere they appear. */
 export function toneForScore(percentage) {
   if (percentage >= 80) return 'green';

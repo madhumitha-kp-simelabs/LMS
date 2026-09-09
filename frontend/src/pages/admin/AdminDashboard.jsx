@@ -224,7 +224,7 @@ export default function AdminDashboard() {
           <LeadTable leads={leads} courses={courses} busyId={busyId} onSetRole={setRole} />
         )}
         {tab === 'trainers' && (
-          <TrainerTable trainers={trainers} busyId={busyId} onSetRole={setRole} />
+          <TrainerTable trainers={trainers} />
         )}
         {tab === 'candidates' && (
           <CandidateTable
@@ -401,7 +401,7 @@ function LeadTable({ leads, courses, busyId, onSetRole }) {
  * or work on it. One column, because "which courses is this person on?" is a
  * single question.
  */
-function TrainerTable({ trainers, busyId, onSetRole }) {
+function TrainerTable({ trainers }) {
   if (trainers.length === 0) {
     return (
       <Empty>
@@ -419,7 +419,6 @@ function TrainerTable({ trainers, busyId, onSetRole }) {
           { label: 'Courses' },
           { label: 'Topics to write', align: 'right' },
           { label: 'Status' },
-          { label: '', align: 'right' },
         ]}
       >
         {trainers.map((trainer) => {
@@ -476,9 +475,6 @@ function TrainerTable({ trainers, busyId, onSetRole }) {
                 </Badge>
               </Cell>
 
-              <Cell align="right">
-                <RoleSelect person={trainer} busyId={busyId} onSetRole={onSetRole} />
-              </Cell>
             </Row>
           );
         })}

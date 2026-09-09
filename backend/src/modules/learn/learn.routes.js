@@ -665,6 +665,7 @@ const feedbackSchema = z.object({
   // feedback can take a rating back off as well as change it.
   contentRating: star('the material').nullable().optional(),
   durationRating: star('the length').nullable().optional(),
+  trainerRating: star('the trainer').nullable().optional(),
   comment: z.string().trim().max(2000).optional(),
 });
 
@@ -687,6 +688,7 @@ router.get(
         rating: true,
         contentRating: true,
         durationRating: true,
+        trainerRating: true,
         comment: true,
         updatedAt: true,
       },
@@ -711,6 +713,7 @@ router.put(
         rating: input.rating,
         contentRating: input.contentRating ?? null,
         durationRating: input.durationRating ?? null,
+        trainerRating: input.trainerRating ?? null,
         comment: input.comment ?? null,
       },
       create: {
@@ -719,12 +722,14 @@ router.put(
         rating: input.rating,
         contentRating: input.contentRating ?? null,
         durationRating: input.durationRating ?? null,
+        trainerRating: input.trainerRating ?? null,
         comment: input.comment ?? null,
       },
       select: {
         rating: true,
         contentRating: true,
         durationRating: true,
+        trainerRating: true,
         comment: true,
         updatedAt: true,
       },

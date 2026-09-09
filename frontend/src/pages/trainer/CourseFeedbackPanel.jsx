@@ -52,10 +52,11 @@ export default function CourseFeedbackPanel({ courseId, onError }) {
       {/* What the overall is made of. A course at 3.5 because the material is
           weak needs a different fix from one at 3.5 because it runs too long,
           and the single number cannot say which. */}
-      {(summary.content || summary.duration) && (
+      {(summary.content || summary.duration || summary.trainer) && (
         <div className="mt-4 grid gap-2 sm:grid-cols-2">
           <Dimension label="Content" stat={summary.content} />
           <Dimension label="Duration" stat={summary.duration} />
+          <Dimension label="Trainer" stat={summary.trainer} />
         </div>
       )}
 

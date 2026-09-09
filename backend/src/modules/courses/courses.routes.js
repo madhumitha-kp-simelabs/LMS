@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma.js';
 import { requireAuth, requireRole } from '../../middleware/auth.js';
+import { AppError } from '../../middleware/error.js';
 import {
   assignDutySchema,
   createTopicSchema,
+  evaluationNotesSchema,
   updateCourseAdminSchema,
   updateCourseSchema,
   updateTopicSchema,
@@ -69,6 +71,81 @@ router.post(
   handle(async (req, res) => {
     await courses.assertCourseLead(req.user, req.params.courseId);
     res.json({ resumed: true, ...(await resumeEnrolment(req.params.userId, req.params.courseId)) });
+  }),
+);
+
+/**
+ * The lead's closing word on one candidate.
+ *
+ * Written by the course's own lead and nobody else — not an administrator,
+ * however much else they can do. An evaluation is a judgement of somebody's
+ * work by the person who taught them; an admin writing one in the lead's name
+ * would be a record with the wrong author on it. Admins read them freely.
+ *
+ * PUT rather than POST: there is one evaluation per enrolment and revising it
+ * replaces it. A lead who thinks better of a phrase should be able to fix it,
+ * not append a second opinion under the first.
+ *
+ * Sending an empty body clears it, which is the only way to withdraw one.
+ */
+router.put(
+  '/:courseId/candidates/:userId/evaluation',
+  handle(async (req, res) => {
+    const { relation } = await courses.courseRelation(req.user, req.params.courseId);
+    if (relation !== 'lead') {
+      throw new AppError(
+        403,
+        relation === 'admin'
+          ? 'Only a course’s lead writes its evaluations — you can read them here'
+          : 'Only the course lead can do that',
+      );
+    }
+
+    const { evaluation } = evaluationNotesSchema.parse(req.body ?? {});
+    const notes = evaluation?.trim() || null;
+
+    const enrolment = await prisma.enrollment.findUnique({
+      where: {
+        userId_courseId: { userId: req.params.userId, courseId: req.params.courseId },
+      },
+      select: { completedAt: true, evaluation: true, user: { select: { fullName: true } } },
+    });
+    if (!enrolment) throw new AppError(404, 'That candidate is not on this course');
+
+    /**
+     * A first evaluation waits for the candidate to finish.
+     *
+     * It is the closing word on a course, so writing one halfway through would
+     * be a verdict on work not yet done. Editing an existing one is always
+     * allowed, including after completion is reversed — allotting a new topic
+     * clears completedAt, and a lead should not be locked out of correcting a
+     * phrase because the course reopened under them.
+     */
+    if (!enrolment.completedAt && !enrolment.evaluation) {
+      throw new AppError(
+        409,
+        `${enrolment.user.fullName} has not finished this course yet — the final evaluation is written once they have.`,
+      );
+    }
+
+    const { count } = await prisma.enrollment.updateMany({
+      where: {
+        courseId: req.params.courseId,
+        userId: req.params.userId,
+        status: 'active',
+      },
+      data: {
+        evaluation: notes,
+        // Cleared together with the text: an author and a date on an empty
+        // evaluation would read as though somebody had written nothing on
+        // purpose.
+        evaluatedById: notes ? req.user.id : null,
+        evaluatedAt: notes ? new Date() : null,
+      },
+    });
+    if (count === 0) throw new AppError(404, 'That candidate is not on this course');
+
+    res.json({ evaluation: notes, evaluatedAt: notes ? new Date() : null });
   }),
 );
 
@@ -142,6 +219,7 @@ router.get(
         // has rated this course has rated that part of it yet.
         content: mean((e) => e.contentRating),
         duration: mean((e) => e.durationRating),
+        trainer: mean((e) => e.trainerRating),
       },
     });
   }),

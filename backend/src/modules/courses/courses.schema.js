@@ -52,3 +52,14 @@ export const assignDutySchema = z
   .refine((d) => 'material' in d || 'quiz' in d, {
     message: 'Name at least one of material or quiz',
   });
+
+/**
+ * The lead's written evaluation of one candidate.
+ *
+ * Capped at 4000 characters — long enough for a considered paragraph or three,
+ * short enough that nobody pastes a transcript into a training record. Empty
+ * is allowed and means "withdraw it".
+ */
+export const evaluationNotesSchema = z.object({
+  evaluation: z.string().trim().max(4000, 'Keep the evaluation under 4000 characters').nullable().optional(),
+});

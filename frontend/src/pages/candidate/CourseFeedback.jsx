@@ -29,6 +29,14 @@ const ITEMS = [
     label: 'Duration',
     hint: 'Was the course the right length?',
   },
+  // The person, not the material. A course marked down for a trainer who was
+  // hard to reach needs a different fix from one marked down for thin content,
+  // and the overall score cannot tell those apart.
+  {
+    key: 'trainerRating',
+    label: 'Trainer',
+    hint: 'Were they clear, available and helpful?',
+  },
 ];
 
 /**
@@ -40,7 +48,12 @@ const ITEMS = [
 export default function CourseFeedback({ courseId, courseTitle }) {
   const [existing, setExisting] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [scores, setScores] = useState({ rating: 0, contentRating: 0, durationRating: 0 });
+  const [scores, setScores] = useState({
+    rating: 0,
+    contentRating: 0,
+    durationRating: 0,
+    trainerRating: 0,
+  });
   // Which star is under the cursor, and on which row — one object, so hovering
   // Content cannot light up Duration.
   const [hovered, setHovered] = useState({ key: null, star: 0 });
@@ -61,6 +74,7 @@ export default function CourseFeedback({ courseId, courseTitle }) {
           rating: feedback?.rating ?? 0,
           contentRating: feedback?.contentRating ?? 0,
           durationRating: feedback?.durationRating ?? 0,
+          trainerRating: feedback?.trainerRating ?? 0,
         });
         setComment(feedback?.comment ?? '');
       })
@@ -84,6 +98,7 @@ export default function CourseFeedback({ courseId, courseTitle }) {
           // the bottom of the lead's averages.
           contentRating: scores.contentRating || null,
           durationRating: scores.durationRating || null,
+          trainerRating: scores.trainerRating || null,
           comment: comment.trim() || undefined,
         },
       });
@@ -101,7 +116,7 @@ export default function CourseFeedback({ courseId, courseTitle }) {
     try {
       await api(`/learn/courses/${courseId}/feedback`, { method: 'DELETE' });
       setExisting(null);
-      setScores({ rating: 0, contentRating: 0, durationRating: 0 });
+      setScores({ rating: 0, contentRating: 0, durationRating: 0, trainerRating: 0 });
       setComment('');
       setEditing(false);
     } catch (err) {

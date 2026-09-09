@@ -9,11 +9,14 @@ import {
   Empty,
   Input,
   Select,
+  ordinal,
+  percentileLabel,
   toneForScore,
 } from '../../components/ui';
 import AttemptReview from '../../components/AttemptReview';
 import OtherCourses from '../../components/OtherCourses';
 import PauseCandidate from '../../components/PauseCandidate';
+import FinalEvaluation from '../../components/FinalEvaluation';
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -428,7 +431,19 @@ function Row({ row, open, onToggle, onChanged, onError }) {
           {row.overallPercentage === null ? (
             <span className="text-sm text-slate-400">—</span>
           ) : (
-            <Badge tone={toneForScore(row.overallPercentage)}>{row.overallPercentage}%</Badge>
+            <>
+              <Badge tone={toneForScore(row.overallPercentage)}>{row.overallPercentage}%</Badge>
+              {/* The percentile under the mark, not beside it: the mark is what
+                  the column is for, and the rank is how to read it. */}
+              {row.percentile !== null && row.percentile !== undefined && (
+                <span
+                  className="mt-0.5 block text-[11px] tabular-nums text-slate-400"
+                  title={percentileLabel(row.percentile)}
+                >
+                  {ordinal(row.percentile)} pct
+                </span>
+              )}
+            </>
           )}
         </span>
 
@@ -457,6 +472,14 @@ function Row({ row, open, onToggle, onChanged, onError }) {
               />
             </div>
           )}
+
+          {/* Written by this course's lead; read by everyone else on staff. */}
+          <FinalEvaluation
+            courseId={row.course.id}
+            candidate={row}
+            canWrite={row.mine}
+            onError={onError}
+          />
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">

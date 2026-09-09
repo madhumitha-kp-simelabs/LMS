@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Badge, Card, Empty, toneForScore } from '../../components/ui';
+import {
+  Alert,
+  Badge,
+  Card,
+  Empty,
+  ordinal,
+  percentileLabel,
+  toneForScore,
+} from '../../components/ui';
 import CompletionSummary from './CompletionSummary';
 import CourseNav from './CourseNav';
 import AttemptReview from '../../components/AttemptReview';
 import OtherCourses from '../../components/OtherCourses';
 import PauseCandidate from '../../components/PauseCandidate';
+import FinalEvaluation from '../../components/FinalEvaluation';
 
 const formatDate = (value) =>
   value ? new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—';
@@ -137,6 +146,9 @@ export default function CourseProgress() {
                 removing={removing === candidate.id}
                 onRemove={() => remove(candidate)}
                 courseId={courseId}
+                // Only this course's lead writes evaluations; an admin reading
+                // the page sees them but gets no editor.
+                isLead={course?.viewer?.relation === 'lead'}
                 onChanged={reload}
                 onError={setError}
               />
@@ -164,7 +176,17 @@ function Tile({ label, value, accent }) {
   );
 }
 
-function CandidateRow({ candidate, open, onToggle, onRemove, removing, courseId, onChanged, onError }) {
+function CandidateRow({
+  candidate,
+  open,
+  onToggle,
+  onRemove,
+  removing,
+  courseId,
+  isLead,
+  onChanged,
+  onError,
+}) {
   // Which attempt is open, if any. Held here rather than on the page so
   // collapsing a candidate puts their answers away with them.
   const [reviewing, onReview] = useState(null);
@@ -195,9 +217,21 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing, courseId,
             {candidate.overallPercentage === null ? (
               <span className="text-slate-400">—</span>
             ) : (
-              <Badge tone={toneForScore(candidate.overallPercentage)}>
-                {candidate.overallPercentage}%
-              </Badge>
+              <>
+                <Badge tone={toneForScore(candidate.overallPercentage)}>
+                  {candidate.overallPercentage}%
+                </Badge>
+                {/* How to read the mark: 55% is a problem in a cohort averaging
+                    85 and the best result in one averaging 40. */}
+                {candidate.percentile != null && (
+                  <span
+                    className="text-xs tabular-nums text-slate-500"
+                    title={percentileLabel(candidate.percentile)}
+                  >
+                    {ordinal(candidate.percentile)} pct
+                  </span>
+                )}
+              </>
             )}
             <span className="text-xs text-slate-400">{open ? '▲' : '▼'}</span>
           </div>
@@ -228,6 +262,14 @@ function CandidateRow({ candidate, open, onToggle, onRemove, removing, courseId,
               onError={onError}
             />
           </div>
+
+          <FinalEvaluation
+            courseId={courseId}
+            candidate={candidate}
+            canWrite={isLead}
+            onError={onError}
+          />
+
           <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">

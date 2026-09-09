@@ -33,6 +33,7 @@ const summarise = (rows) => ({
   distribution: [1, 2, 3, 4, 5].map((star) => rows.filter((r) => r.rating === star).length),
   content: mean(rows, (r) => r.contentRating),
   duration: mean(rows, (r) => r.durationRating),
+  trainer: mean(rows, (r) => r.trainerRating),
 });
 
 const Stars = ({ n }) => (
@@ -141,6 +142,7 @@ export default function AllFeedback() {
                   {/* Beside the headline, because the headline is their sum. */}
                   <Part label="Content" value={shown.content} />
                   <Part label="Duration" value={shown.duration} />
+                  <Part label="Trainer" value={shown.trainer} />
                 </div>
 
                 <Distribution distribution={shown.distribution} />
@@ -334,11 +336,15 @@ function Entry({ entry }) {
 
           <div className="shrink-0 text-right">
             <Stars n={entry.rating} />
-            {(entry.contentRating || entry.durationRating) && (
+            {(entry.contentRating || entry.durationRating || entry.trainerRating) && (
               <p className="mt-1 text-xs text-slate-500">
-                {entry.contentRating ? `content ${entry.contentRating}` : ''}
-                {entry.contentRating && entry.durationRating ? ' · ' : ''}
-                {entry.durationRating ? `duration ${entry.durationRating}` : ''}
+                {[
+                  entry.contentRating && `content ${entry.contentRating}`,
+                  entry.durationRating && `duration ${entry.durationRating}`,
+                  entry.trainerRating && `trainer ${entry.trainerRating}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </p>
             )}
             <p className="mt-1 flex items-center justify-end gap-2 text-xs text-slate-500">

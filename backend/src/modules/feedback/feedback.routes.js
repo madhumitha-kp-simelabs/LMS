@@ -76,6 +76,7 @@ router.get(
       distribution: [1, 2, 3, 4, 5].map((star) => rows.filter((r) => r.rating === star).length),
       content: mean(rows, (r) => r.contentRating),
       duration: mean(rows, (r) => r.durationRating),
+      trainer: mean(rows, (r) => r.trainerRating),
     });
 
     res.json({
@@ -84,6 +85,7 @@ router.get(
         rating: entry.rating,
         contentRating: entry.contentRating,
         durationRating: entry.durationRating,
+        trainerRating: entry.trainerRating,
         comment: entry.comment,
         updatedAt: entry.updatedAt,
         candidate: entry.user,

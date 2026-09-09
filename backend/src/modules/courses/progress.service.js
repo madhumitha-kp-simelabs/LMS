@@ -16,6 +16,25 @@ const round = (n) => Math.round(n * 10) / 10;
  * different numbers for the same work.
  */
 /**
+ * Percentile rank within a cohort, by the mid-rank method.
+ *
+ * (everyone below + half of everyone level with them) / cohort × 100. Halving
+ * the ties is what keeps it symmetrical: three people on the same mark all sit
+ * in the middle of that band rather than all at its top or all at its bottom.
+ *
+ * Null for a cohort of one. A percentile against yourself is always 50 and
+ * means nothing, and printing it would invite somebody to read it as a real
+ * standing.
+ */
+const percentileRank = (mark, marks) => {
+  if (mark === null || marks.length < 2) return null;
+
+  const below = marks.filter((m) => m < mark).length;
+  const equal = marks.filter((m) => m === mark).length;
+  return Math.round(((below + equal / 2) / marks.length) * 100);
+};
+
+/**
  * The day a course ends for one candidate, as things stand today.
  *
  * `dueAt` is the stored deadline and already carries almost everything: it is
@@ -60,7 +79,11 @@ export async function courseProgress(courseId) {
       // and leaving them in would have every lead chasing people who are not
       // coming back.
       where: { courseId, status: 'active', supersededAt: null, discontinuedAt: null },
-      include: { user: { select: { id: true, fullName: true, email: true } } },
+      include: {
+        user: { select: { id: true, fullName: true, email: true } },
+        // Named, so the evaluation carries an author a manager can go and ask.
+        evaluator: { select: { id: true, fullName: true } },
+      },
       orderBy: { enrolledAt: 'asc' },
     }),
     prisma.topicAssignment.findMany({
@@ -236,6 +259,11 @@ export async function courseProgress(courseId) {
       endsAt: endsAt(enrollment),
       pausedAt: enrollment.pausedAt,
       pausedDays: enrollment.pausedDays,
+      // The lead's closing word, and who left it. Read by staff on both
+      // progress screens; only the course's own lead may write it.
+      evaluation: enrollment.evaluation,
+      evaluatedAt: enrollment.evaluatedAt,
+      evaluatedBy: enrollment.evaluator?.fullName ?? null,
       otherCourses: elsewhereByCandidate.get(enrollment.userId) ?? [],
       topicsAllotted: myTopics.length,
       quizzesAvailable: withQuiz.length,
@@ -255,6 +283,24 @@ export async function courseProgress(courseId) {
   });
 
   const scored = candidates.filter((c) => c.overallPercentage !== null);
+
+  /**
+   * Where each candidate sits against the rest of their cohort.
+   *
+   * A percentage says how much of the material somebody has, and on its own it
+   * cannot tell a weak candidate from a hard course: 55% is a problem in a
+   * cohort averaging 85 and the best result in a cohort averaging 40. The
+   * percentile is what separates those two readings, which is exactly what the
+   * handbook asks it for — measuring the candidate, and finding the courses
+   * worth fixing.
+   *
+   * Ranked within one course, never across them. Comparing a React candidate
+   * against a project-management one would be a number with nothing behind it.
+   */
+  const marks = scored.map((c) => c.overallPercentage);
+  for (const candidate of candidates) {
+    candidate.percentile = percentileRank(candidate.overallPercentage, marks);
+  }
 
   // Which topics the group as a whole struggles with — the signal for fixing
   // the course rather than coaching one person.

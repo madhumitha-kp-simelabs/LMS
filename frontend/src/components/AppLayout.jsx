@@ -236,18 +236,18 @@ export default function AppLayout() {
       <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-sky-400" />
 
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-8 py-4">
-          <div className="flex items-center gap-10">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 flex-1 items-center gap-4 xl:gap-8">
             <Link to={HOME_FOR_ROLE[user.role]} className="group flex items-center gap-2">
               <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white shadow-sm">
                 L
               </span>
-              <span className="font-semibold text-slate-900 transition group-hover:text-indigo-600">
+              <span className="hidden font-semibold text-slate-900 transition group-hover:text-indigo-600 lg:block">
                 Learning Tracker
               </span>
             </Link>
 
-            <nav className="flex items-center gap-1">
+            <nav className="flex min-w-0 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {links.map((link, index) => (
                 // A rule before `section`, so a lead's two lives read as two
                 // groups rather than one run-on list. Fragment keyed on the
@@ -261,7 +261,7 @@ export default function AppLayout() {
                     to={link.to}
                     end={link.end}
                     className={({ isActive }) =>
-                      `flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition ${
+                      `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm transition ${
                         isActive
                           ? 'bg-indigo-50 font-medium text-indigo-700'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -294,7 +294,7 @@ export default function AppLayout() {
                             halfOf(index) === 'staff' ? STAFF_HAT[user.role] : 'As candidate'
                           }" to use this`
                     }
-                    className="cursor-not-allowed whitespace-nowrap rounded-lg px-3 py-1.5 text-sm text-slate-300"
+                    className="shrink-0 cursor-not-allowed whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm text-slate-300"
                   >
                     {link.label}
                   </span>
@@ -304,13 +304,13 @@ export default function AppLayout() {
             </nav>
           </div>
 
-          <div className="flex shrink-0 items-center gap-4">
+          <div className="flex shrink-0 items-center gap-2.5 sm:gap-3">
             {/* Only for somebody who has both halves. A candidate, a trainer or
                 an admin has one set of screens, and a switch with one setting
                 is a control that does nothing. */}
             {bothHats && (
               <span
-                className={`inline-flex divide-x overflow-hidden rounded-lg border text-xs ${
+                className={`inline-flex shrink-0 divide-x overflow-hidden rounded-lg border text-xs ${
                   hat === null
                     ? // Nothing picked yet, and the whole nav is grey behind it,
                       // so the switch has to be what the eye lands on.
@@ -326,7 +326,7 @@ export default function AppLayout() {
                     key={which}
                     onClick={() => wearHat(which)}
                     aria-pressed={hat === which}
-                    className={`whitespace-nowrap px-2.5 py-1.5 font-medium transition ${
+                    className={`whitespace-nowrap px-2 py-1.5 font-medium transition ${
                       hat === which
                         ? 'bg-indigo-50 text-indigo-700'
                         : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
@@ -338,26 +338,28 @@ export default function AppLayout() {
               </span>
             )}
 
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
               <span
                 className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold ${role.avatar}`}
                 aria-hidden
               >
                 {initials(user.fullName)}
               </span>
-              <span className="hidden leading-tight sm:block">
-                <span className="block text-sm font-medium text-slate-900">{user.fullName}</span>
-                <span className={`block text-xs ${role.text}`} title={subtitleTitle}>
+              <span className="hidden min-w-0 max-w-[11rem] leading-tight lg:block">
+                <span className="block truncate text-sm font-medium text-slate-900">
+                  {user.fullName}
+                </span>
+                <span className={`block truncate text-xs ${role.text}`} title={subtitleTitle}>
                   {subtitle}
                 </span>
               </span>
             </div>
 
-            <span className="h-8 w-px bg-slate-200" aria-hidden />
+            <span className="hidden h-8 w-px bg-slate-200 sm:block" aria-hidden />
 
             <button
               onClick={signOut}
-              className="rounded-lg px-3 py-1.5 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              className="shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
             >
               Sign out
             </button>

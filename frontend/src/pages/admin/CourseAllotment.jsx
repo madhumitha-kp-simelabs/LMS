@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { Alert, Avatar, Badge, Button, Card, Empty, Select } from '../../components/ui';
+import { Alert, Avatar, Badge, Button, Card, Empty, Input, Select } from '../../components/ui';
 import { useAdminOverview } from './useAdminOverview';
 import { toneForCategory } from '../../lib/categories';
 
@@ -19,6 +19,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
  */
 export default function CourseAllotment() {
   const { data, error, notice, busyId, run } = useAdminOverview();
+  const [query, setQuery] = useState('');
 
   if (error) {
     return (
@@ -76,6 +77,32 @@ export default function CourseAllotment() {
   // courses is one lead.
   const leadCount = new Set(courses.filter((c) => c.trainer).map((c) => c.trainer.id)).size;
 
+  /**
+   * Narrowing the list.
+   *
+   * Searches everything visible on a card — code and version, title, category,
+   * and the lead's name — because any of those is a plausible thing to have in
+   * mind. Somebody typing "Priya" wants the courses she runs, not a course
+   * called Priya, and both readings land on the same rows.
+   */
+  const needle = query.trim().toLowerCase();
+  const shown = courses.filter((course) => {
+    if (!needle) return true;
+
+    return [
+      course.code,
+      `${course.code} v${course.version}`,
+      `v${course.version}`,
+      course.title,
+      course.category?.name,
+      course.trainer?.fullName,
+    ]
+      .filter(Boolean)
+      .some((field) => String(field).toLowerCase().includes(needle));
+  });
+
+  const filtering = Boolean(needle);
+
   return (
     <div>
       <Heading />
@@ -95,12 +122,35 @@ export default function CourseAllotment() {
           <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
             <h2 className="text-lg font-semibold text-slate-900">Courses</h2>
             <p className="text-sm text-slate-500">
-              {plural(courses.length, 'course')} · {plural(leadCount, 'lead')}
-              {waiting.length > 0 && (
+              {filtering
+                ? `${shown.length} of ${courses.length} courses`
+                : `${plural(courses.length, 'course')} · ${plural(leadCount, 'lead')}`}
+              {!filtering && waiting.length > 0 && (
                 <span className="font-medium text-amber-700"> · {waiting.length} without a lead</span>
               )}
             </p>
           </div>
+
+          {/* Offered only once there is enough to hunt through. Below that the
+              list is quicker to read than a search box is to type into. */}
+          {courses.length > 3 && (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1 sm:max-w-md">
+                <Input
+                  type="search"
+                  placeholder="Search by code, title, category or lead…"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </div>
+
+              {filtering && (
+                <Button variant="secondary" size="sm" onClick={() => setQuery('')}>
+                  Clear
+                </Button>
+              )}
+            </div>
+          )}
 
           {courses.length === 0 ? (
             <div className="mt-4">
@@ -114,7 +164,19 @@ export default function CourseAllotment() {
             </div>
           ) : (
             <div className="mt-4 space-y-3">
-              {courses.map((course) => (
+              {shown.length === 0 && (
+                <Empty>
+                  No course matches that.{' '}
+                  <button
+                    onClick={() => setQuery('')}
+                    className="font-medium text-indigo-700 underline"
+                  >
+                    Show all {courses.length}
+                  </button>
+                </Empty>
+              )}
+
+              {shown.map((course) => (
                 <CourseCard
                   key={course.id}
                   course={course}
@@ -257,7 +319,7 @@ function CourseCard({ course, leads, trainers, candidates, busyId, onAllot, onAd
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold tracking-wide text-indigo-700">
-              {course.code}
+              {course.code} <span className="font-normal opacity-70">v{course.version}</span>
             </span>
             <Badge tone={course.isPublished ? 'green' : 'amber'}>
               {course.isPublished ? 'Published' : 'Draft'}

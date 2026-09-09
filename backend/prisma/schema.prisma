@@ -117,6 +117,7 @@ model User {
   courseTeams      CourseTrainer[]    @relation("TrainerOnCourse")
   materialsAdded   Material[]         @relation("MaterialUploader")
   coursesArchived  Course[]           @relation("CourseArchiver")
+  evaluationsGiven Enrollment[]       @relation("EnrolmentEvaluator")
   materialDuties   Topic[]            @relation("TopicMaterialDuty")
   quizDuties       Topic[]            @relation("TopicQuizDuty")
   enrollments      Enrollment[]
@@ -551,8 +552,27 @@ model Enrollment {
    */
   discontinuedAt DateTime?
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  /**
+   * The lead's closing word on how this candidate did.
+   *
+   * Written prose, not a score. A number would say a candidate finished at 62%
+   * — which the marks already say — where the useful thing is "strong on the
+   * practical work, needs another pass at hooks before a client project". That
+   * is what a manager reads six months later, and no scale carries it.
+   *
+   * The course's lead writes it; administrators read it and cannot change it.
+   * One per enrolment, revisable: a lead who thinks better of a phrase should
+   * be able to fix it rather than append a second opinion.
+   */
+  evaluation     String?
+  evaluatedById  String?
+  evaluatedAt    DateTime?
+
+  user      User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade: a lead leaving the organisation must not delete the
+  // evaluations they wrote — the training record outlives the author.
+  evaluator User? @relation("EnrolmentEvaluator", fields: [evaluatedById], references: [id], onDelete: SetNull)
 
   @@unique([userId, courseId])
   @@index([courseId, status])
@@ -596,6 +616,15 @@ model CourseFeedback {
   rating         Int // 1-5, overall
   contentRating  Int? // 1-5, the material itself
   durationRating Int? // 1-5, whether the course was the right length
+  // 1-5, how the person who taught it did. Separate from the material for the
+  // same reason content and duration are separate: a course marked down for a
+  // trainer who was hard to reach needs a different fix from one marked down
+  // for thin material, and one number cannot say which.
+  //
+  // Rated against the course's lead — the person a candidate actually deals
+  // with — not the trainers who wrote individual topics, whom a candidate
+  // never meets.
+  trainerRating  Int?
   comment   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
