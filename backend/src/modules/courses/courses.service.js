@@ -397,6 +397,13 @@ export async function courseDeletionImpact(user, courseId) {
 export async function deleteCourse(user, courseId) {
   await assertCourseLead(user, courseId);
 
+  // Read before the row goes: the cleanup below needs to know which edition of
+  // which course this was.
+  const going = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { code: true, version: true },
+  });
+
   const [materials, submissions] = await Promise.all([
     prisma.material.findMany({
       where: { topic: { courseId }, fileUrl: { not: null } },
@@ -409,6 +416,45 @@ export async function deleteCourse(user, courseId) {
   ]);
 
   await prisma.course.delete({ where: { id: courseId } });
+
+  /**
+   * Nobody is left having moved to a course that no longer exists.
+   *
+   * Moving to a later edition supersedes the old enrolment rather than deleting
+   * it, so the results earned on it survive. Delete that later edition and the
+   * cascade takes the new enrolment with it — leaving the old one marked as
+   * moved-on with nowhere to have moved to. The candidate then has no live
+   * enrolment on the course at all: it shows as "Moved to a later version"
+   * against an edition that is now the only one there is.
+   *
+   * So an earlier enrolment is revived unless the candidate is genuinely on
+   * some later edition still. Checked per person rather than assumed, because
+   * a cohort part-way through v3 must not be dragged back to v1 by somebody
+   * deleting v2.
+   */
+  const stranded = await prisma.enrollment.findMany({
+    where: {
+      supersededAt: { not: null },
+      course: { code: going.code, version: { lt: going.version } },
+    },
+    select: { id: true, userId: true, course: { select: { version: true } } },
+  });
+
+  for (const enrolment of stranded) {
+    const elsewhere = await prisma.enrollment.count({
+      where: {
+        userId: enrolment.userId,
+        course: { code: going.code, version: { gt: enrolment.course.version } },
+      },
+    });
+
+    if (elsewhere === 0) {
+      await prisma.enrollment.update({
+        where: { id: enrolment.id },
+        data: { supersededAt: null },
+      });
+    }
+  }
 
   /**
    * After the row is gone: an orphaned file is untidy, a course whose deletion
@@ -451,9 +497,38 @@ export async function createTopic(user, courseId, data) {
     select: { position: true },
   });
 
-  return prisma.topic.create({
+  const topic = await prisma.topic.create({
     data: { ...data, courseId, position: (last?.position ?? 0) + 1 },
   });
+
+  /**
+   * A new topic goes straight to everybody already on the course.
+   *
+   * This used to happen when the topic was published, which was the moment a
+   * lead said "this is ready". Topics are no longer published — allotment is
+   * the only gate now — so without this a topic added to a running course would
+   * reach nobody until somebody remembered to hand it out, which is the exact
+   * gap publishing was there to close.
+   *
+   * Candidates who have moved to a later version or stopped are left out: they
+   * are not on this edition any more, and giving them new material would pull
+   * them back onto something they have left.
+   */
+  const enrolled = await prisma.enrollment.findMany({
+    where: { courseId, status: 'active', supersededAt: null, discontinuedAt: null },
+    select: { userId: true },
+  });
+
+  let allotted = 0;
+  if (enrolled.length > 0) {
+    const { count } = await prisma.topicAssignment.createMany({
+      data: enrolled.map(({ userId }) => ({ userId, topicId: topic.id, assignedBy: user.id })),
+      skipDuplicates: true,
+    });
+    allotted = count;
+  }
+
+  return { ...topic, allotted };
 }
 
 /**
@@ -549,56 +624,13 @@ export async function assertTopicLead(user, topicId) {
 export const changesPublishState = (data) => data.isPublished !== undefined;
 
 export async function updateTopic(user, topicId, data) {
-  // The topic's own record — title, blurb, publish state — is the lead's. Now
-  // that the work is split in two, neither trainer owns the topic itself; they
-  // own the material or the quiz hanging off it.
-  const before = await assertTopicLead(user, topicId);
-  const topic = await prisma.topic.update({ where: { id: topicId }, data });
-
-  /**
-   * Publishing a topic hands it to everybody already on the course.
-   *
-   * Enrolment is the decision about who is taught this course; allotting was
-   * meant to be about staging the material, not about admission. But a topic
-   * published after somebody enrolled reached nobody until a lead went back and
-   * allotted it by hand — so a candidate could be enrolled, see the course in
-   * Browse, and find nothing under My learning, because that list is built from
-   * allotments rather than enrolments.
-   *
-   * Only on the transition into published, and `skipDuplicates` so a lead who
-   * unpublishes and republishes does not trip over the rows already there.
-   *
-   * Candidates who have moved to a later version or stopped the course are left
-   * out: they are not on this edition any more, and handing them new material
-   * would pull them back onto something they have left.
-   */
-  let allotted = 0;
-  if (data.isPublished === true && !before.isPublished) {
-    const enrolled = await prisma.enrollment.findMany({
-      where: {
-        courseId: topic.courseId,
-        status: 'active',
-        supersededAt: null,
-        discontinuedAt: null,
-      },
-      select: { userId: true },
-    });
-
-    if (enrolled.length > 0) {
-      const { count } = await prisma.topicAssignment.createMany({
-        data: enrolled.map(({ userId }) => ({
-          userId,
-          topicId: topic.id,
-          assignedBy: user.id,
-        })),
-        skipDuplicates: true,
-      });
-      allotted = count;
-    }
-  }
-
-  return { ...topic, allotted };
+  // The topic's own record — its title and blurb — is the lead's. Now that the
+  // work is split in two, neither trainer owns the topic itself; they own the
+  // material or the quiz hanging off it.
+  await assertTopicLead(user, topicId);
+  return prisma.topic.update({ where: { id: topicId }, data });
 }
+
 
 export async function deleteTopic(user, topicId) {
   await assertTopicLead(user, topicId);
@@ -747,7 +779,6 @@ export async function duplicateCourse(user, courseId) {
           title: topic.title,
           description: topic.description,
           position: topic.position,
-          isPublished: topic.isPublished,
           // Duties come across: the people who wrote v1's material are the
           // obvious people to revise it, and clearing them would make the lead
           // hand out the same work twice.

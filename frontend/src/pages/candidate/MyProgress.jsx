@@ -1,30 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { Alert, Badge, Card, Empty } from '../../components/ui';
-import CourseFeedback from './CourseFeedback';
-import SessionRequest from './SessionRequest';
 import CourseSchedule from './CourseSchedule';
 
-/**
- * Score analysis for the signed-in candidate.
- *
- * Scores are a single measure compared across topics, so the chart is one
- * sequential blue ramp (darker = higher) rather than a colour per topic —
- * colour here encodes magnitude, not identity, so there is no legend to read.
- */
+/** Score analysis for the signed-in candidate. */
 
-// Sequential blue, light -> dark. Validated for a single hue, monotone
-// lightness, visible step gaps, and light-end contrast on a white surface.
-const RAMP = [
-  { min: 80, fill: '#184f95' },
-  { min: 60, fill: '#2a78d6' },
-  { min: 40, fill: '#5598e7' },
-  { min: 0, fill: '#86b6ef' },
-];
-
-const INK = { secondary: '#52514e', muted: '#898781', grid: '#e1e0d9' };
-
-const fillFor = (percentage) => RAMP.find((step) => percentage >= step.min).fill;
+const INK = { muted: '#898781', grid: '#e1e0d9' };
 
 const formatDate = (value) =>
   new Date(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -33,13 +14,19 @@ export default function MyProgress() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // One course open at a time. Null before the fetch lands; the first course
+  // opens itself once it does, so the page is never a row of shut drawers.
+  const [openId, setOpenId] = useState(null);
 
   // Pausing, resuming and asking for time all move dates this page prints, so
   // it has to be reloadable rather than fetched once.
   const load = useCallback(
     () =>
       api('/learn/progress')
-        .then(({ courses }) => setCourses(courses))
+        .then(({ courses }) => {
+          setCourses(courses);
+          setOpenId((current) => current ?? courses[0]?.id ?? null);
+        })
         .catch((err) => setError(err.message)),
     [],
   );
@@ -64,9 +51,15 @@ export default function MyProgress() {
           <Empty>Nothing has been allotted to you yet.</Empty>
         </div>
       ) : (
-        <div className="mt-6 space-y-8">
+        <div className="mt-6 space-y-3">
           {courses.map((course) => (
-            <CourseProgress key={course.id} course={course} onChanged={load} />
+            <CourseProgress
+              key={course.id}
+              course={course}
+              open={openId === course.id}
+              onToggle={() => setOpenId((current) => (current === course.id ? null : course.id))}
+              onChanged={load}
+            />
           ))}
         </div>
       )}
@@ -74,23 +67,70 @@ export default function MyProgress() {
   );
 }
 
-function CourseProgress({ course, onChanged }) {
+/**
+ * One course, as a drawer.
+ *
+ * Somebody on four courses had four full analyses stacked down the page, and
+ * the one they came to look at was rarely the first. The closed row carries
+ * what tells them which drawer to open — the course, its headline score and
+ * how much of it is done — and everything below it is the detail behind that
+ * number.
+ */
+function CourseProgress({ course, open, onToggle, onChanged }) {
   const { summary, topics } = course;
-  const scored = topics.filter((t) => t.latest);
+  const started = summary.quizzesAttempted > 0;
 
   return (
-    <section>
-      <p className="flex flex-wrap items-baseline gap-2">
-        <span className="text-base font-semibold tracking-wide text-indigo-600">{course.code}</span>
-        <span className="text-xs text-slate-400">v{course.version}</span>
-        {/* Says why this one is not in My courses any more. Without it a
-            finished-looking record with no way back reads as a fault. */}
-        {course.dates?.supersededAt && <Badge tone="slate">Moved to a later version</Badge>}
-      </p>
-      <h2 className="font-semibold text-slate-900">{course.title}</h2>
-      <CourseDates dates={course.dates} />
+    <Card flush accent={open ? 'indigo' : undefined}>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`flex w-full flex-wrap items-center justify-between gap-x-6 gap-y-2 px-5 py-4 text-left transition hover:bg-slate-50/70 ${
+          open ? 'bg-slate-50/60' : ''
+        }`}
+      >
+        <span className="min-w-0">
+          <span className="flex flex-wrap items-baseline gap-2">
+            <span className="text-sm font-semibold tracking-wide text-indigo-600">
+              {course.code}
+            </span>
+            <span className="text-xs text-slate-400">v{course.version}</span>
+            {/* Says why this one is not in My courses any more. Without it a
+                finished-looking record with no way back reads as a fault. */}
+            {course.dates?.supersededAt && <Badge tone="slate">Moved to a later version</Badge>}
+          </span>
+          <span className="block truncate font-semibold text-slate-900">{course.title}</span>
+        </span>
 
-      {summary.quizzesAttempted === 0 ? (
+        <span className="flex shrink-0 items-center gap-4">
+          {started ? (
+            <span className="text-right">
+              <span className="block text-xl font-semibold leading-none text-slate-900">
+                {summary.overallPercentage}
+                <span className="text-sm font-medium text-slate-400">%</span>
+              </span>
+              <span className="mt-1 block text-xs text-slate-500">
+                {summary.quizzesAttempted}/{summary.quizzesAvailable} quizzes
+              </span>
+            </span>
+          ) : (
+            <span className="text-xs text-slate-400">Not started</span>
+          )}
+
+          <span
+            className={`text-xs text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+            aria-hidden
+          >
+            ▾
+          </span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 px-5 py-5">
+          <CourseDates dates={course.dates} />
+
+          {summary.quizzesAttempted === 0 ? (
         <div className="space-y-6">
           <Empty>
             You haven&apos;t taken any quizzes in this course yet. Your scores will appear here once
@@ -100,10 +140,6 @@ function CourseProgress({ course, onChanged }) {
             course={{ id: course.id, ...course.dates }}
             onChanged={onChanged}
           />
-
-          <SessionRequest courseId={course.id} courseTitle={course.title} />
-
-          <CourseFeedback courseId={course.id} courseTitle={course.title} />
         </div>
       ) : (
         <div className="space-y-6">
@@ -130,25 +166,17 @@ function CourseProgress({ course, onChanged }) {
             </div>
           </Card>
 
-          <Card>
-            <h3 className="font-semibold text-slate-900">Score by topic</h3>
-            <p className="mt-1 text-sm text-slate-500">Latest attempt · darker means higher</p>
-            <ScoreChart topics={scored} />
-          </Card>
-
           <AttemptTable topics={topics.filter((t) => t.attemptCount > 0)} />
 
           <CourseSchedule
             course={{ id: course.id, ...course.dates }}
             onChanged={onChanged}
           />
-
-          <SessionRequest courseId={course.id} courseTitle={course.title} />
-
-          <CourseFeedback courseId={course.id} courseTitle={course.title} />
+            </div>
+          )}
         </div>
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -189,95 +217,15 @@ function Stat({ label, value }) {
   );
 }
 
-function ScoreChart({ topics }) {
-  const [hovered, setHovered] = useState(null);
-
-  return (
-    <div className="mt-5">
-      <div className="space-y-4">
-        {topics.map((topic) => {
-          const pct = topic.latest.percentage;
-          const active = hovered === topic.topicId;
-
-          return (
-            <div
-              key={topic.topicId}
-              onMouseEnter={() => setHovered(topic.topicId)}
-              onMouseLeave={() => setHovered(null)}
-              className="relative"
-            >
-              <div className="mb-1.5 flex items-baseline justify-between gap-4">
-                <span className="truncate text-sm text-slate-700">
-                  <span className="text-slate-400">{topic.position}.</span> {topic.title}
-                </span>
-                {/* Value at the tip of the bar, in ink — never the data colour. */}
-                <span
-                  className="shrink-0 text-sm font-semibold"
-                  style={{ color: INK.secondary, fontVariantNumeric: 'tabular-nums' }}
-                >
-                  {pct}%
-                </span>
-              </div>
-
-              {/* Track shows the 0-100 scale the bar is measured against. */}
-              <div className="h-5 w-full overflow-hidden rounded-sm" style={{ background: '#f1f5f9' }}>
-                <div
-                  className="h-full transition-[width] duration-500"
-                  style={{
-                    width: `${Math.max(pct, 0.6)}%`,
-                    background: fillFor(pct),
-                    // 4px rounded data-end, square where it meets the baseline.
-                    borderRadius: '0 4px 4px 0',
-                  }}
-                />
-              </div>
-
-              {active && (
-                <div className="absolute right-0 top-full z-10 mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm">
-                  <p className="font-medium text-slate-900">
-                    {topic.latest.totalScore}/{topic.latest.maxScore} marks
-                  </p>
-                  <p className="mt-0.5" style={{ color: INK.muted }}>
-                    {topic.attemptCount} attempt{topic.attemptCount === 1 ? '' : 's'} · best{' '}
-                    {topic.bestPercentage}%
-                  </p>
-                  <p style={{ color: INK.muted }}>{formatDate(topic.latest.submittedAt)}</p>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-5 flex items-center gap-4 border-t pt-3" style={{ borderColor: INK.grid }}>
-        <span className="text-xs" style={{ color: INK.muted }}>
-          Lower
-        </span>
-        <div className="flex gap-1">
-          {[...RAMP].reverse().map((step) => (
-            <span
-              key={step.fill}
-              className="h-2.5 w-8 rounded-sm"
-              style={{ background: step.fill }}
-              aria-hidden
-            />
-          ))}
-        </div>
-        <span className="text-xs" style={{ color: INK.muted }}>
-          Higher
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/** The table view — every value in the chart, reachable without reading colour. */
 function AttemptTable({ topics }) {
   if (topics.length === 0) return null;
 
   return (
     <Card>
       <h3 className="font-semibold text-slate-900">All attempts</h3>
+      <p className="mt-1 text-sm text-slate-500">
+        Every sitting, including the ones a retake replaced.
+      </p>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

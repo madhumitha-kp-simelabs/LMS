@@ -84,7 +84,7 @@ export default function DiscontinueCourse({ course, onChanged }) {
   const declined = requests.find((r) => r.status === 'declined');
 
   return (
-    <div className="mt-3 border-t border-slate-100 pt-3">
+    <div className="contents">
       {/* Errors from withdrawing show here; errors from the form show inside
           the dialog, where the person is actually looking. */}
       {!open && <Alert>{error}</Alert>}
@@ -105,17 +105,45 @@ export default function DiscontinueCourse({ course, onChanged }) {
           </Button>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Button variant="danger" onClick={() => setOpen(true)}>
-            Discontinue this course
-          </Button>
+        <>
+          {/* An icon, not a full-width danger button.
+              Stopping a course is rare and irreversible-feeling, and a red bar
+              across the bottom of every course card read as the main thing on
+              offer. The dialog behind it still spells out the consequences, so
+              nothing is lost by making the way in quiet — and the label stays
+              on the tooltip and for screen readers, because an icon alone is
+              not a name. */}
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            title="Discontinue this course"
+            aria-label="Discontinue this course"
+            className="grid h-[26px] w-[26px] place-items-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
+          >
+            {/* A door with an arrow leaving it: the act is leaving the course,
+                not deleting it. A bin would say the wrong thing. */}
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-3.5 w-3.5"
+              aria-hidden="true"
+            >
+              <path d="M12 3H5.5A1.5 1.5 0 0 0 4 4.5v11A1.5 1.5 0 0 0 5.5 17H12" />
+              <path d="M14.5 7.5 17 10l-2.5 2.5" />
+              <path d="M17 10H8.5" />
+            </svg>
+          </button>
           {declined && (
             <span className="text-xs text-slate-500">
               Last request was declined
               {declined.response ? ` — “${declined.response}”` : ''}
             </span>
           )}
-        </div>
+        </>
       )}
 
       <Modal open={open} title={`Stop ${course.code}?`} onClose={close}>

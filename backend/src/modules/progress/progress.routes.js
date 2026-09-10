@@ -67,6 +67,23 @@ router.get(
       }
     }
 
+    /**
+     * Sorted by person, then by course.
+     *
+     * The rows are gathered course by course, which scattered a candidate on
+     * two courses down the page and made their name look repeated by accident.
+     * Somebody on two courses is genuinely two rows — their standing on one
+     * says nothing about the other — but the two belong next to each other,
+     * and this page is called Candidate progress for a reason. Reading by
+     * course is what the course filter is for.
+     */
+    rows.sort(
+      (a, b) =>
+        a.fullName.localeCompare(b.fullName) ||
+        a.course.code.localeCompare(b.course.code) ||
+        a.course.version - b.course.version,
+    );
+
     res.json({
       // One row per candidate per course — somebody on two courses is two rows,
       // because their standing on one says nothing about the other.

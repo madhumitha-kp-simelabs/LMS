@@ -224,7 +224,7 @@ function ProjectRow({ project, onDelete }) {
           <h2 className="mt-1 font-semibold text-slate-900">{project.title}</h2>
 
           {project.brief && (
-            <p className="mt-1 line-clamp-2 max-w-2xl text-sm leading-relaxed text-slate-600">
+            <p className="mt-1 max-w-3xl whitespace-pre-line text-sm leading-relaxed text-slate-600">
               {project.brief}
             </p>
           )}

@@ -26,7 +26,7 @@ const round = (n) => Math.round(n * 10) / 10;
  * means nothing, and printing it would invite somebody to read it as a real
  * standing.
  */
-const percentileRank = (mark, marks) => {
+export const percentileRank = (mark, marks) => {
   if (mark === null || marks.length < 2) return null;
 
   const below = marks.filter((m) => m < mark).length;

@@ -14,6 +14,7 @@ import {
   Table,
 } from '../../components/ui';
 import { useAdminOverview } from './useAdminOverview';
+import { toneForCategory } from '../../lib/categories';
 import TeamManager from './TeamManager';
 
 const formatDate = (value) =>
@@ -22,6 +23,9 @@ const formatDate = (value) =>
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const TABS = [
+  // Courses first: the people tabs all answer "who", and this answers "what",
+  // which is the thing they are all about.
+  { id: 'courses', label: 'Courses' },
   { id: 'leads', label: 'Leads' },
   { id: 'trainers', label: 'Trainers' },
   { id: 'candidates', label: 'Candidates' },
@@ -103,7 +107,7 @@ export default function AdminDashboard() {
   if (error) {
     return (
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Administration</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
         <div className="mt-4">
           <Alert>{error}</Alert>
         </div>
@@ -116,6 +120,7 @@ export default function AdminDashboard() {
   const { stats, courses, leads, trainers, candidates, admins } = data;
 
   const counts = {
+    courses: courses.length,
     leads: leads.length,
     trainers: trainers.length,
     candidates: candidates.length,
@@ -124,7 +129,7 @@ export default function AdminDashboard() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-slate-900">Administration</h1>
+      <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
       <p className="mt-1 text-sm text-slate-500">
         Everyone across the organisation — {plural(leads.length, 'lead')} running{' '}
         {plural(stats.courses, 'course')}, {plural(stats.trainers, 'trainer')} in all, and{' '}
@@ -220,6 +225,7 @@ export default function AdminDashboard() {
       <div className="mt-6 space-y-4">
         {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
 
+        {tab === 'courses' && <CourseTable courses={courses} />}
         {tab === 'leads' && (
           <LeadTable leads={leads} courses={courses} busyId={busyId} onSetRole={setRole} />
         )}
@@ -303,6 +309,112 @@ const allotmentLink = (
  * Lead accounts. A lead runs courses and is the only one who can publish; the
  * tab answers, for each of them, what they run and who works under them.
  */
+
+/**
+ * Every course in the organisation, with who runs it and what is on it.
+ *
+ * The people tabs beside this one each answer "who is here"; this answers
+ * "what are we teaching", which is the question they are all in service of. It
+ * reads only — the catalogue page creates and edits courses, and the allotment
+ * page decides who runs them, so duplicating either here would give two places
+ * to do one thing.
+ */
+function CourseTable({ courses }) {
+  if (courses.length === 0) {
+    return <Empty>No courses yet. Add the first one on the Courses page.</Empty>;
+  }
+
+  // Grouped the way the catalogue groups them, so an administrator moving
+  // between the two pages is reading the same shape twice.
+  const byCode = [...courses].sort(
+    (a, b) => a.code.localeCompare(b.code) || a.version - b.version,
+  );
+
+  return (
+    <Table
+      headers={[
+        { label: 'Course' },
+        { label: 'Lead' },
+        { label: 'Topics', align: 'right' },
+        { label: 'Candidates', align: 'right' },
+        { label: 'Rating', align: 'right' },
+        { label: 'Status' },
+      ]}
+    >
+      {byCode.map((course) => (
+        <Row key={course.id}>
+          <Cell>
+            <Link to={`/trainer/courses/${course.id}`} className="group block min-w-0">
+              <span className="flex flex-wrap items-baseline gap-x-1.5">
+                <span className="text-xs font-semibold tracking-wide text-indigo-600">
+                  {course.code}
+                </span>
+                <span className="text-xs text-slate-400">v{course.version}</span>
+                {course.category && (
+                  <Badge tone={toneForCategory(course.category)}>{course.category.name}</Badge>
+                )}
+              </span>
+              <span className="block truncate font-medium text-slate-900 group-hover:text-indigo-700">
+                {course.title}
+              </span>
+            </Link>
+          </Cell>
+
+          <Cell className="truncate text-sm">
+            {course.trainer ? (
+              <span className="text-slate-700">{course.trainer.fullName}</span>
+            ) : (
+              // The one gap on this page worth acting on, so it is coloured
+              // rather than left as a dash.
+              <Badge tone="amber">No lead</Badge>
+            )}
+          </Cell>
+
+          <Cell align="right" className="text-slate-700">
+            {course.topics}
+            {course.unassignedTopics > 0 && (
+              <span
+                className="ml-1 text-xs text-amber-700"
+                title={`${course.unassignedTopics} topic(s) with a half not handed out`}
+              >
+                ({course.unassignedTopics})
+              </span>
+            )}
+          </Cell>
+
+          <Cell align="right" className="text-slate-700">
+            {course.candidates}
+            {course.pendingRequests > 0 && (
+              <span className="ml-1 text-xs text-amber-700" title="waiting to join">
+                +{course.pendingRequests}
+              </span>
+            )}
+          </Cell>
+
+          <Cell align="right">
+            {/* A count beside the average, because 5.0 from one person and 5.0
+                from twelve are not the same finding. */}
+            {course.feedbackAverage === null ? (
+              <span className="text-sm text-slate-400">—</span>
+            ) : (
+              <span className="text-sm text-slate-700">
+                {course.feedbackAverage}
+                <span className="ml-1 text-xs text-slate-400">({course.feedbackCount})</span>
+              </span>
+            )}
+          </Cell>
+
+          <Cell>
+            <Badge tone={course.isPublished ? 'green' : 'amber'}>
+              {course.isPublished ? 'Published' : 'Draft'}
+            </Badge>
+          </Cell>
+        </Row>
+      ))}
+    </Table>
+  );
+}
+
 function LeadTable({ leads, courses, busyId, onSetRole }) {
   if (leads.length === 0) {
     return (

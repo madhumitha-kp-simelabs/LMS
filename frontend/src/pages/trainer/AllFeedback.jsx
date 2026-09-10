@@ -118,48 +118,10 @@ export default function AllFeedback() {
           </Empty>
         ) : (
           <>
-            {/* The headline first: one number, and whether it hides a split. */}
-            <Card accent="amber">
-              <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    {scope}
-                  </p>
-                  <p className="mt-1 flex items-baseline gap-3">
-                    <span className="text-3xl font-semibold text-slate-900">
-                      {shown.average ?? '—'}
-                    </span>
-                    {shown.average != null && <Stars n={Math.round(shown.average)} />}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    from {plural(shown.count, 'candidate')}
-                    {filtering && shown.count !== summary.count && ` of ${summary.count}`}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-4">
-                  {/* Beside the headline, because the headline is their sum. */}
-                  <Part label="Content" value={shown.content} />
-                  <Part label="Duration" value={shown.duration} />
-                  <Part label="Trainer" value={shown.trainer} />
-                </div>
-
-                <Distribution distribution={shown.distribution} />
-              </div>
-            </Card>
-
-            {/* Per course, so an average of 4.1 cannot hide one course at 2. */}
-            <div className="grid gap-3 sm:grid-cols-2">
-              {courses.map((course) => (
-                <CourseRow
-                  key={course.id}
-                  course={course}
-                  active={courseId === course.id}
-                  onPick={() => setCourseId((current) => (current === course.id ? '' : course.id))}
-                />
-              ))}
-            </div>
-
+            {/* Filters first. They govern everything below them — the headline
+                average as much as the comments — so putting them after the
+                summary made the summary look like a fixed total that the
+                controls beneath could not touch. */}
             <div className="flex flex-wrap items-center gap-3">
               <div className="min-w-[14rem] flex-1">
                 <Input
@@ -207,23 +169,58 @@ export default function AllFeedback() {
               )}
             </div>
 
-            {filtering && (
-              <p className="text-xs text-slate-500">
-                {filtered.length === 0
-                  ? 'Nothing matches.'
-                  : `Showing ${filtered.length} of ${plural(summary.count, 'rating')}.`}
-              </p>
-            )}
+            {/* The summary and the ratings it is drawn from, in one frame —
+                the average is a claim and the ratings beneath are the evidence
+                for it, so they are read together. */}
+            <Card accent="amber" flush>
+              <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 px-6 py-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {scope}
+                  </p>
+                  <p className="mt-1 flex items-baseline gap-3">
+                    <span className="text-3xl font-semibold text-slate-900">
+                      {shown.average ?? '—'}
+                    </span>
+                    {shown.average != null && <Stars n={Math.round(shown.average)} />}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    from {plural(shown.count, 'candidate')}
+                    {filtering && shown.count !== summary.count && ` of ${summary.count}`}
+                  </p>
+                </div>
 
-            {filtered.length === 0 ? (
-              <Empty>No feedback matches those filters.</Empty>
-            ) : (
-              <ul className="space-y-3">
-                {filtered.map((entry) => (
-                  <Entry key={entry.id} entry={entry} />
-                ))}
-              </ul>
-            )}
+                <div className="flex flex-wrap gap-4">
+                  {/* Beside the headline, because the headline is their sum. */}
+                  <Part label="Content" value={shown.content} />
+                  <Part label="Duration" value={shown.duration} />
+                  <Part label="Trainer" value={shown.trainer} />
+                </div>
+
+                <Distribution distribution={shown.distribution} />
+              </div>
+
+              <div className="border-t border-amber-200/70 bg-white px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Candidate ratings
+                  {filtering && filtered.length > 0 && (
+                    <span className="ml-2 font-normal normal-case tracking-normal text-slate-400">
+                      {filtered.length} of {plural(summary.count, 'rating')}
+                    </span>
+                  )}
+                </p>
+
+                {filtered.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-500">Nothing matches those filters.</p>
+                ) : (
+                  <ul className="mt-3 space-y-3">
+                    {filtered.map((entry) => (
+                      <Entry key={entry.id} entry={entry} />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
           </>
         )}
       </div>
@@ -259,56 +256,10 @@ function Distribution({ distribution }) {
   );
 }
 
-/** One course's standing, and a way to filter the list down to it. */
-function CourseRow({ course, active, onPick }) {
-  const rated = course.count > 0;
-
-  return (
-    <button
-      onClick={rated ? onPick : undefined}
-      // A course nobody has rated is a fact, not a filter — pressing it would
-      // show an empty list and teach you nothing you did not already see here.
-      disabled={!rated}
-      className={`rounded-xl border px-4 py-3 text-left transition ${
-        active
-          ? 'border-indigo-400 bg-indigo-50/60'
-          : rated
-            ? 'border-slate-200 bg-white hover:border-slate-300'
-            : 'border-dashed border-slate-200 bg-slate-50/60'
-      }`}
-    >
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="min-w-0">
-          <span className="flex items-baseline gap-1.5">
-            <span className="text-xs font-semibold tracking-wide text-indigo-600">
-              {course.code}
-            </span>
-            <span className="text-xs text-slate-400">v{course.version}</span>
-          </span>
-          <span className="mt-0.5 block truncate text-sm text-slate-700">{course.title}</span>
-        </span>
-
-        <span className="shrink-0 text-right">
-          {rated ? (
-            <>
-              <span className="text-sm font-semibold text-slate-900">{course.average}</span>
-              <span className="mt-0.5 block text-xs text-slate-500">
-                {plural(course.count, 'rating')}
-              </span>
-            </>
-          ) : (
-            <span className="text-xs text-slate-400">no feedback</span>
-          )}
-        </span>
-      </div>
-    </button>
-  );
-}
-
 function Entry({ entry }) {
   return (
-    <li>
-      <Card>
+    <li className="rounded-xl border border-slate-200 px-4 py-3.5">
+      <div>
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="min-w-0">
             <div className="flex flex-wrap items-baseline gap-x-2">
@@ -352,7 +303,7 @@ function Entry({ entry }) {
           // whose comment failed to load.
           <p className="mt-3 text-xs text-slate-400">Rated without a comment.</p>
         )}
-      </Card>
+      </div>
     </li>
   );
 }

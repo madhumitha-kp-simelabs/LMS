@@ -31,16 +31,33 @@ const NAV_FOR_ROLE = {
     { to: '/home', label: 'Home' },
     { to: '/browse', label: 'Browse' },
     { to: '/my-courses', label: 'My courses' },
-    { to: '/my-projects', label: 'My projects' },
+    { to: '/my-projects', label: 'My projects', badge: 'projects' },
     { to: '/my-progress', label: 'My progress' },
     { to: '/inbox', label: 'Updates', badge: 'notices' },
   ],
   // A trainer writes the topics handed to them and nothing else, so they get
   // the courses they are on and the two screens about how those are going.
   trainer: [
-    { to: '/trainer', label: 'My courses', end: true },
+    // "Courses" rather than "My courses": the learner half below has a
+    // My courses of its own, and two items of the same name in one bar is
+    // the confusion the hat switcher exists to prevent.
+    { to: '/trainer', label: 'Courses', end: true },
     { to: '/trainer/progress', label: 'Progress' },
     { to: '/trainer/feedback', label: 'Feedback' },
+    /**
+     * A trainer learns too.
+     *
+     * Writing the topics on one course does not stop somebody being taught
+     * another, and the rule that keeps the two apart is per course — nobody is
+     * a learner on a course they work on — not per role. So a trainer gets the
+     * candidate's nav, item for item, exactly as a lead does.
+     */
+    { to: '/home', label: 'Home', section: true },
+    { to: '/browse', label: 'Browse' },
+    { to: '/my-courses', label: 'My courses' },
+    { to: '/my-projects', label: 'My projects', badge: 'projects' },
+    { to: '/my-progress', label: 'My progress' },
+    { to: '/inbox', label: 'Updates', badge: 'notices' },
   ],
   /**
    * A lead has two lives and the nav has to say which is which.
@@ -58,25 +75,36 @@ const NAV_FOR_ROLE = {
     { to: '/trainer/projects', label: 'Projects' },
     { to: '/trainer/feedback', label: 'Feedback' },
     { to: '/trainer/inbox', label: 'Requests', badge: 'requests' },
-    // Browse answers "what does the organisation teach?" — for a lead as much
-    // as a candidate. It sits on the learning side because that is the half of
-    // the app it belongs to, even though a lead often opens it to find a
-    // colleague's course rather than to enrol.
-    { to: '/browse', label: 'Browse', section: true },
-    { to: '/my-courses', label: 'Learning' },
-    { to: '/my-projects', label: 'My projects' },
+    /**
+    * The learner half is the candidate's nav, item for item.
+    *
+    * It used to be a shortened version with its own labels — "Learning" rather
+    * than "My courses", no Home, no My progress — on the grounds that
+    * "Courses" and "My courses" read alike in one long bar. The hat switcher
+    * settles that: only one half is live at a time, so the two can no longer
+    * be confused, and a lead being taught a course should see exactly what
+    * every other learner sees rather than a cut-down version of it.
+    */
+    { to: '/home', label: 'Home', section: true },
+    { to: '/browse', label: 'Browse' },
+    { to: '/my-courses', label: 'My courses' },
+    { to: '/my-projects', label: 'My projects', badge: 'projects' },
+    { to: '/my-progress', label: 'My progress' },
     { to: '/inbox', label: 'Updates', badge: 'notices' },
   ],
   // An admin's "Courses" is the catalogue — what exists and what it is called.
   // Leads and trainers get the working view of the courses they are on.
   admin: [
+    // First, because it is the overview the rest of the nav drills into — an
+    // admin opening the app wants the shape of the organisation before they
+    // want any one course.
+    { to: '/admin', label: 'Dashboard', end: true },
     { to: '/admin/courses', label: 'Courses' },
     { to: '/admin/allotment', label: 'Allotment' },
     { to: '/admin/projects', label: 'Projects' },
     { to: '/trainer/progress', label: 'Progress' },
     { to: '/trainer/feedback', label: 'Feedback' },
     { to: '/trainer/inbox', label: 'Requests', badge: 'requests' },
-    { to: '/admin', label: 'Administration', end: true },
   ],
 };
 
@@ -152,6 +180,8 @@ export default function AppLayout() {
 
   const [pending, setPending] = useState(0);
   const [unread, setUnread] = useState(0);
+  // Projects handed over since this person last looked at the list.
+  const [newProjects, setNewProjects] = useState(0);
   // Which courses they lead. "Course lead" alone tells somebody their job
   // title, which they already know; the useful half is which courses it is
   // over — especially for a lead who runs three and is looking at a fourth.
@@ -161,6 +191,8 @@ export default function AppLayout() {
   // And only people with an Inbox link need the unread one. A lead who is also
   // learning has both links and both counts.
   const reads = links.some((link) => link.badge === 'notices');
+  // Only somebody with a learner half is ever given project work.
+  const learns = links.some((link) => link.badge === 'projects');
 
   /**
    * The line under the name: the role, and what it is over.
@@ -182,6 +214,12 @@ export default function AppLayout() {
     if (reads) {
       api('/notifications/count')
         .then(({ count }) => setUnread(count))
+        .catch(() => {});
+    }
+
+    if (learns) {
+      api('/learn/projects/count')
+        .then(({ count }) => setNewProjects(count))
         .catch(() => {});
     }
 
@@ -209,7 +247,7 @@ export default function AppLayout() {
       )
       // A failed badge count is not worth interrupting the page for.
       .catch(() => {});
-  }, [staffMember, reads]);
+  }, [staffMember, reads, learns]);
 
   // Refresh on navigation, and whenever the inbox says it acted on something.
   useEffect(() => {
@@ -277,6 +315,11 @@ export default function AppLayout() {
                     {link.badge === 'requests' && pending > 0 && (
                       <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
                         {pending}
+                      </span>
+                    )}
+                    {link.badge === 'projects' && newProjects > 0 && (
+                      <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-xs font-semibold text-white">
+                        {newProjects}
                       </span>
                     )}
                   </NavLink>

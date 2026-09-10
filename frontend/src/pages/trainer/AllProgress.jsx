@@ -110,11 +110,6 @@ export default function AllProgress() {
 
   if (!data && !error) return <p className="text-sm text-slate-500">Loading progress…</p>;
 
-  const scored = rows.filter((r) => r.overallPercentage !== null);
-  const average =
-    scored.length === 0
-      ? null
-      : Math.round(scored.reduce((sum, r) => sum + r.overallPercentage, 0) / scored.length);
   const filtering = Boolean(query.trim() || courseId || standing);
 
   return (
@@ -161,16 +156,6 @@ export default function AllProgress() {
                   accent="indigo"
                   active={standing === 'inProgress'}
                   onPick={() => setStanding((c) => (c === 'inProgress' ? '' : 'inProgress'))}
-                />
-                <Tile
-                  label="Average score"
-                  value={average === null ? '—' : `${average}%`}
-                  hint={
-                    scored.length === 0
-                      ? 'nothing scored yet'
-                      : `across ${plural(scored.length, 'candidate')}`
-                  }
-                  accent="emerald"
                 />
               </div>
             </Card>
@@ -300,10 +285,6 @@ function Tile({ label, value, hint, accent, active, onPick }) {
       <span className="mt-1 block text-xs text-slate-500">{hint}</span>
     </>
   );
-
-  // Average score is a fact, not a queue — it filters nothing, so it is not a
-  // button pretending otherwise.
-  if (!onPick) return <div className="px-5 py-4">{body}</div>;
 
   return (
     <button

@@ -32,7 +32,7 @@ const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
  * Trainers are deliberately left out for now: nobody has asked for it, and
  * adding a role here is one word when they do.
  */
-router.use(requireAuth, requireRole('candidate', 'lead'));
+router.use(requireAuth, requireRole('candidate', 'trainer', 'lead'));
 
 /**
  * Stamps the day a candidate first opened anything in a course.
@@ -139,6 +139,42 @@ router.get(
   '/projects',
   handle(async (req, res) => {
     res.json({ projects: await projects.listForCandidate(req.user.id) });
+  }),
+);
+
+/**
+ * How many projects have been handed to this candidate that they have not seen.
+ *
+ * New work, not outstanding work. A badge that counted everything unfinished
+ * would sit on the tab for as long as the project took, telling them something
+ * they already know; this one says "something arrived" and then goes.
+ *
+ * Declared before /projects/:projectId, or Express reads "count" as an id.
+ */
+router.get(
+  '/projects/count',
+  handle(async (req, res) => {
+    const count = await prisma.projectAllotment.count({
+      where: { userId: req.user.id, seenAt: null },
+    });
+    res.json({ count });
+  }),
+);
+
+/**
+ * The candidate has now looked. Sent by the projects page once it has loaded,
+ * rather than folded into the GET above: a request that reads a list should
+ * not quietly change it, and a page that failed to render would otherwise
+ * still have marked the work as seen.
+ */
+router.post(
+  '/projects/seen',
+  handle(async (req, res) => {
+    const { count } = await prisma.projectAllotment.updateMany({
+      where: { userId: req.user.id, seenAt: null },
+      data: { seenAt: new Date() },
+    });
+    res.json({ seen: count });
   }),
 );
 
@@ -346,12 +382,7 @@ router.get(
           owner: { select: { fullName: true } },
           category: { select: { id: true, name: true, slug: true, position: true } },
           team: { where: { userId: req.user.id }, select: { userId: true } },
-          // Published topics only. Counting drafts told a candidate the course
-          // had a topic while the screen also told them nothing had been
-          // shared — which reads as being denied something, when the truth is
-          // there is nothing to give yet. A course whose topics are all drafts
-          // honestly has none to offer.
-          _count: { select: { topics: { where: { isPublished: true } } } },
+          _count: { select: { topics: true } },
         },
       }),
       prisma.enrollment.findMany({
@@ -411,11 +442,8 @@ router.get(
       where: { userId: req.user.id },
     });
     const allottedTopicIds = new Set(allotted.map((a) => a.topicId));
-    // Published only, matching the count beside it. A topic allotted and then
-    // unpublished is not openable, and counting it produced "Open 1 of 0
-    // topics" the moment the total started excluding drafts.
     const topicsPerCourse = await prisma.topic.findMany({
-      where: { id: { in: [...allottedTopicIds] }, isPublished: true },
+      where: { id: { in: [...allottedTopicIds] } },
       select: { id: true, courseId: true },
     });
     const allottedCount = new Map();
@@ -521,7 +549,7 @@ router.post(
     }
 
     const topics = await prisma.topic.findMany({
-      where: { courseId: target.id, isPublished: true },
+      where: { courseId: target.id },
       select: { id: true },
     });
 

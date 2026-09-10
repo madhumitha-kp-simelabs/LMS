@@ -227,6 +227,7 @@ export default function AdminCourses() {
               onSave={saveCourse}
               onDuplicate={duplicate}
               onArchive={archive}
+              onDeleted={removeCourse}
               onError={(text) => setNotice({ tone: 'rose', text })}
             />
           </div>
@@ -512,7 +513,16 @@ const GRID =
  * content that never came. Empty categories are now a single quiet line at the
  * bottom, and each category that does hold something gets its own card.
  */
-function CourseCatalogue({ courses, categories, busy, onSave, onDuplicate, onArchive, onError }) {
+function CourseCatalogue({
+  courses,
+  categories,
+  busy,
+  onSave,
+  onDuplicate,
+  onArchive,
+  onDeleted,
+  onError,
+}) {
   // One row at a time: two half-finished edits on screen is a way to save the
   // wrong one.
   const [editingId, setEditingId] = useState(null);

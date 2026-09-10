@@ -62,8 +62,26 @@ export default function CourseProjects() {
     }
   }
 
-  const create = async (body) => {
-    const made = await run(() => api(`/projects/courses/${courseId}`, { method: 'POST', body }));
+  /**
+   * Creating a project and handing it out, as one act.
+   *
+   * Setting work and deciding who does it were two screens apart, so a brief
+   * could sit written and unallotted for days with nothing to say so. The
+   * candidates are chosen on the form; the allotment follows the create in the
+   * same submit.
+   */
+  const create = async ({ candidateIds = [], ...body }) => {
+    const made = await run(async () => {
+      const { project } = await api(`/projects/courses/${courseId}`, { method: 'POST', body });
+
+      if (candidateIds.length > 0) {
+        await api(`/projects/${project.id}/allotments`, {
+          method: 'POST',
+          body: { candidateIds },
+        });
+      }
+    });
+
     if (made) setAdding(false);
     return made;
   };
@@ -73,11 +91,6 @@ export default function CourseProjects() {
 
   const remove = (project) =>
     run(() => api(`/projects/${project.id}`, { method: 'DELETE' }));
-
-  const allot = (project, candidateIds) =>
-    run(() =>
-      api(`/projects/${project.id}/allotments`, { method: 'POST', body: { candidateIds } }),
-    );
 
   const takeBack = (project, candidateId) =>
     run(() => api(`/projects/${project.id}/allotments/${candidateId}`, { method: 'DELETE' }));
@@ -160,7 +173,14 @@ export default function CourseProjects() {
           </Alert>
         )}
 
-        {adding && <ProjectForm busy={busy} onSave={create} onCancel={() => setAdding(false)} />}
+        {adding && (
+          <ProjectForm
+            busy={busy}
+            candidates={candidates}
+            onSave={create}
+            onCancel={() => setAdding(false)}
+          />
+        )}
 
         {projects?.length === 0 ? (
           <Empty>
@@ -178,7 +198,6 @@ export default function CourseProjects() {
               busy={busy}
               onUpdate={update}
               onRemove={remove}
-              onAllot={allot}
               onTakeBack={takeBack}
               onError={setError}
             />
@@ -196,7 +215,6 @@ function ProjectRow({
   busy,
   onUpdate,
   onRemove,
-  onAllot,
   onTakeBack,
   onError,
 }) {
@@ -334,189 +352,22 @@ function ProjectRow({
           </>
         )}
 
-        {isLead && (
-          <GiveOut
-            project={project}
-            candidates={candidates}
-            busy={busy}
-            onAllot={onAllot}
-          />
-        )}
+
       </div>
     </Card>
   );
 }
 
-/**
- * Handing one project to the people on the course.
- *
- * Only candidates enrolled on this course are offered, and only those who do
- * not already hold it — the server refuses anybody else, and a list that lets
- * you tick a name it will then reject is worse than one that never showed it.
- *
- * Collapsed until asked for. A lead reading down the page is usually checking
- * on work already running, not setting more of it, and a permanently open list
- * of names under every project buries the progress that is the point.
- */
-function GiveOut({ project, candidates, busy, onAllot }) {
-  const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState([]);
-
-  const holding = new Set(project.candidates.map((c) => c.id));
-  const spare = candidates.filter((c) => !holding.has(c.id));
-
-  const toggle = (id) =>
-    setPicked((chosen) =>
-      chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id],
-    );
-
-  // Nobody left to give it to, so say which of the two reasons it is.
-  if (spare.length === 0) {
-    return (
-      <p className="mt-2 text-xs text-slate-400">
-        {candidates.length === 0
-          ? 'Nobody is enrolled on this course yet.'
-          : 'Everyone on this course already has this project.'}
-      </p>
-    );
-  }
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="mt-2 text-xs font-medium text-indigo-600 underline transition hover:text-indigo-700"
-      >
-        Give this to someone ({spare.length} {spare.length === 1 ? 'candidate' : 'candidates'})
-      </button>
-    );
-  }
-
-  return (
-    <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
-      <p className="text-xs font-medium text-slate-700">Give this project to:</p>
-
-      <ul className="mt-2 space-y-1">
-        {spare.map((candidate) => (
-          <li key={candidate.id}>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={picked.includes(candidate.id)}
-                onChange={() => toggle(candidate.id)}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600"
-              />
-              {candidate.fullName}
-              <span className="text-xs text-slate-400">{candidate.email}</span>
-            </label>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
-        <Button
-          size="sm"
-          disabled={busy || picked.length === 0}
-          onClick={async () => {
-            const given = await onAllot(project, picked);
-            if (given) {
-              setPicked([]);
-              setOpen(false);
-            }
-          }}
-        >
-          {busy ? 'Giving…' : `Give to ${picked.length || 'nobody'}`}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={busy}
-          onClick={() => {
-            setPicked([]);
-            setOpen(false);
-          }}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * What one candidate handed in, beside their name. A link opens in a tab; a
- * file is fetched with the token and handed to the browser, since a plain href
- * cannot authenticate.
- */
-function Work({ projectId, candidate, onError }) {
-  const { submission } = candidate;
-
-  if (!submission.submittedAt) {
-    return <span className="text-xs text-slate-400">nothing handed in</span>;
-  }
-
-  return (
-    <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
-      {submission.url && (
-        <a
-          href={submission.url}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="max-w-xs truncate text-indigo-600 underline hover:text-indigo-700"
-          title={submission.url}
-        >
-          {submission.url.replace(/^https?:\/\//, '')}
-        </a>
-      )}
-
-      {submission.filename && (
-        <button
-          onClick={() => openProjectFile(projectId, candidate.id).catch((e) => onError(e.message))}
-          className="text-indigo-600 underline hover:text-indigo-700"
-        >
-          {submission.filename}
-        </button>
-      )}
-
-      {submission.note && (
-        <span className="max-w-md text-slate-500" title={submission.note}>
-          “{submission.note.length > 80 ? `${submission.note.slice(0, 80)}…` : submission.note}”
-        </span>
-      )}
-    </span>
-  );
-}
-
-/**
- * Where the lead's judgement stands on one candidate's work, in the smallest
- * space that carries it. The detail — the feedback itself — lives on the Work
- * handed in screen; this list is for scanning.
- */
-function Mark({ evaluation, handedIn }) {
-  if (!evaluation.evaluatedAt) {
-    // Nothing handed in and nothing marked is the ordinary state, not news.
-    return handedIn ? <span className="text-xs text-amber-700">to review</span> : null;
-  }
-
-  return (
-    <span
-      className={`text-xs font-medium ${
-        evaluation.score != null && evaluation.score < 50 ? 'text-rose-700' : 'text-emerald-700'
-      }`}
-      title={evaluation.feedback ?? undefined}
-    >
-      {evaluation.score == null ? 'reviewed' : `${evaluation.score}/100`}
-    </span>
-  );
-}
-
-/** One form for both adding and editing — the fields are the same either way. */
-function ProjectForm({ project, busy, onSave, onCancel }) {
+function ProjectForm({ project, busy, candidates = [], onSave, onCancel }) {
   const [form, setForm] = useState({
     title: project?.title ?? '',
     brief: project?.brief ?? '',
     dueAt: asDateInput(project?.dueAt),
   });
+  // Only when setting new work. Editing a brief is not the moment to change
+  // who holds it — that would quietly add people to work already under way.
+  const [picked, setPicked] = useState([]);
+  const choosing = !project && candidates.length > 0;
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -525,6 +376,7 @@ function ProjectForm({ project, busy, onSave, onCancel }) {
       brief: form.brief.trim() || undefined,
       // An empty box clears the deadline rather than sending a bad date.
       dueAt: form.dueAt || null,
+      ...(choosing && { candidateIds: picked }),
     });
   }
 
@@ -561,6 +413,56 @@ function ProjectForm({ project, busy, onSave, onCancel }) {
             onChange={(event) => setForm({ ...form, dueAt: event.target.value })}
           />
         </div>
+
+        {choosing && (
+          <div className="border-t border-slate-100 pt-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-slate-700">Give it to</p>
+              <button
+                type="button"
+                onClick={() =>
+                  setPicked((current) =>
+                    current.length === candidates.length ? [] : candidates.map((c) => c.id),
+                  )
+                }
+                className="text-xs font-medium text-indigo-600 underline transition hover:text-indigo-700"
+              >
+                {picked.length === candidates.length ? 'Clear' : 'Everyone on the course'}
+              </button>
+            </div>
+
+            <ul className="mt-2 space-y-1">
+              {candidates.map((candidate) => (
+                <li key={candidate.id}>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={picked.includes(candidate.id)}
+                      onChange={() =>
+                        setPicked((current) =>
+                          current.includes(candidate.id)
+                            ? current.filter((id) => id !== candidate.id)
+                            : [...current, candidate.id],
+                        )
+                      }
+                      className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600"
+                    />
+                    {candidate.fullName}
+                    <span className="text-xs text-slate-400">{candidate.email}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+
+            {/* Said rather than assumed: a project nobody holds is a fair
+                thing to create, but it should be a choice. */}
+            {picked.length === 0 && (
+              <p className="mt-2 text-xs text-slate-400">
+                Nobody selected — the project is created but given to no one.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-2 border-t border-slate-100 pt-4">
           <Button type="submit" size="sm" disabled={busy}>

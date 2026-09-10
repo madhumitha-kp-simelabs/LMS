@@ -25,14 +25,24 @@ export function Button({ variant = 'primary', size = 'md', className = '', ...pr
 
   // A prop rather than a px-* override through className: Tailwind emits px-4
   // after px-3, so a smaller padding passed in silently loses to the base one.
+  /**
+   * xs pins its height rather than letting padding decide.
+   *
+   * Only some variants carry a border, so padding alone made a primary xs
+   * button two pixels shorter than a secondary one beside it — and both
+   * different again from the icon buttons they sit next to on a row. A fixed
+   * height and centred content makes every small control the same size
+   * whatever its variant.
+   */
   const sizes = {
+    xs: 'inline-flex h-[26px] items-center px-2.5 text-xs',
     sm: 'px-3 py-1.5 text-sm',
     md: 'px-4 py-2 text-sm',
   }[size];
 
   return (
     <button
-      className={`rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${sizes} ${styles} ${className}`}
+      className={`justify-center rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${sizes} ${styles} ${className}`}
       {...props}
     />
   );

@@ -32,7 +32,7 @@ const daysUntil = (value) =>
  * when you may pause, extend, or neither are fiddly enough that having them
  * written twice would guarantee the two disagreeing.
  */
-export default function CourseSchedule({ course, onChanged, compact = false }) {
+export default function CourseSchedule({ course, onChanged, compact = false, extra = null }) {
   const [extensions, setExtensions] = useState([]);
   const [asking, setAsking] = useState(false);
   // Seeded a week past the current deadline: a starting point to adjust beats
@@ -137,7 +137,7 @@ export default function CourseSchedule({ course, onChanged, compact = false }) {
           <div className="flex flex-wrap gap-2">
             {paused ? (
               <Button
-                size="sm"
+                size={compact ? 'xs' : 'sm'}
                 disabled={busy}
                 onClick={() => run(() => api(`/learn/courses/${course.id}/resume`, { method: 'POST' }))}
               >
@@ -146,7 +146,7 @@ export default function CourseSchedule({ course, onChanged, compact = false }) {
             ) : (
               <Button
                 variant="secondary"
-                size="sm"
+                size={compact ? 'xs' : 'sm'}
                 disabled={busy}
                 onClick={() => run(() => api(`/learn/courses/${course.id}/pause`, { method: 'POST' }))}
                 title="Pulled onto something urgent? Your deadline moves by the days you lose."
@@ -158,7 +158,7 @@ export default function CourseSchedule({ course, onChanged, compact = false }) {
             {!open && !asking && !paused && (
               <Button
                 variant="secondary"
-                size="sm"
+                size={compact ? 'xs' : 'sm'}
                 onClick={() => {
                   setForm({
                     until: asDateInput(new Date(new Date(course.dueAt).getTime() + 7 * 86400000)),
@@ -170,6 +170,12 @@ export default function CourseSchedule({ course, onChanged, compact = false }) {
                 Ask for more time
               </Button>
             )}
+
+            {/* Anything else that acts on this enrolment — discontinuing it,
+                today. Pause, more time and stopping are the three answers to
+                "I cannot finish this on schedule", so they belong together
+                rather than scattered around the card. */}
+            {extra}
           </div>
         )}
       </div>

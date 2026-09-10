@@ -37,7 +37,7 @@ router.get(
   '/candidates',
   handle(async (req, res) => {
     const candidates = await prisma.user.findMany({
-      where: { role: { in: ['candidate', 'lead'] }, isActive: true },
+      where: { role: { in: ['candidate', 'trainer', 'lead'] }, isActive: true },
       select: {
         id: true,
         fullName: true,
@@ -87,7 +87,7 @@ router.post(
     const { candidateIds } = allotSchema.parse(req.body);
 
     const candidates = await prisma.user.findMany({
-      where: { id: { in: candidateIds }, role: { in: ['candidate', 'lead'] } },
+      where: { id: { in: candidateIds }, role: { in: ['candidate', 'trainer', 'lead'] } },
       select: { id: true },
     });
     if (candidates.length !== candidateIds.length) {
@@ -215,7 +215,7 @@ router.post(
      */
     const topics = allotAllTopics
       ? await prisma.topic.findMany({
-          where: { courseId: req.params.courseId, isPublished: true },
+          where: { courseId: req.params.courseId },
           select: { id: true },
         })
       : [];

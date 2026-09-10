@@ -224,7 +224,9 @@ function ProjectCard({ project, candidates, busy, onGive, onTakeBack, onDelete }
             {project.allotted === 0 && <Badge tone="rose">Not given out</Badge>}
           </div>
           {project.brief && (
-            <p className="mt-1 line-clamp-2 max-w-2xl text-sm text-slate-600">{project.brief}</p>
+            <p className="mt-1 max-w-3xl whitespace-pre-line text-sm leading-relaxed text-slate-600">
+              {project.brief}
+            </p>
           )}
         </div>
 

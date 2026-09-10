@@ -29,7 +29,7 @@ const formatDate = (value) =>
  * an inbox tells a lead nothing they can prepare against — the whole value of
  * the request is that they arrive knowing what it is about.
  */
-export default function SessionRequest({ courseId, courseTitle }) {
+export default function SessionRequest({ courseId, courseTitle, topicTitle = null }) {
   const [sessions, setSessions] = useState(null);
   const [reason, setReason] = useState('');
   const [asking, setAsking] = useState(false);
@@ -90,13 +90,20 @@ export default function SessionRequest({ courseId, courseTitle }) {
         <div>
           <h3 className="text-lg font-semibold text-slate-900">One-to-one session</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Stuck on something in {courseTitle}? Ask its lead for time and they will send you a
-            slot.
+            {topicTitle
+              ? `Stuck on ${topicTitle}? Ask the course lead for time and they will send you a slot.`
+              : `Stuck on something in ${courseTitle}? Ask its lead for time and they will send you a slot.`}
           </p>
         </div>
 
         {!open && !asking && (
-          <Button size="sm" onClick={() => setAsking(true)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (topicTitle && !reason) setReason(`On "${topicTitle}": `);
+              setAsking(true);
+            }}
+          >
             Request a session
           </Button>
         )}

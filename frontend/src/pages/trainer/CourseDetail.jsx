@@ -113,9 +113,7 @@ export default function CourseDetail() {
         <div className="mt-4">
           <JoinRequests
             courseId={course.id}
-            // Published only: approving allots the published topics, so
-            // counting drafts here promises access that will not arrive.
-            topicCount={course.topics.filter((topic) => topic.isPublished).length}
+            topicCount={course.topics.length}
             onChanged={load}
             onError={setError}
           />
@@ -742,9 +740,34 @@ function DeleteTopic({ topic, onChanged, onError }) {
 
   if (!armed) {
     return (
-      <Button variant="danger" size="sm" className="shrink-0" onClick={() => setArmed(true)}>
-        Delete topic
-      </Button>
+      // An icon, not a labelled danger button. Deleting a topic is rare and
+      // the confirmation behind it still spells out exactly what goes, so the
+      // way in does not need to shout from the top of every topic. The label
+      // stays on the tooltip and for screen readers — an icon alone is not a
+      // name.
+      <button
+        type="button"
+        onClick={() => setArmed(true)}
+        title="Delete this topic"
+        aria-label="Delete this topic"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
+      >
+        <svg
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-4 w-4"
+          aria-hidden="true"
+        >
+          <path d="M4 6h12" />
+          <path d="M8 6V4.5A1.5 1.5 0 0 1 9.5 3h1A1.5 1.5 0 0 1 12 4.5V6" />
+          <path d="M5.5 6l.6 9a1.5 1.5 0 0 0 1.5 1.4h4.8a1.5 1.5 0 0 0 1.5-1.4l.6-9" />
+          <path d="M8.5 9v5M11.5 9v5" />
+        </svg>
+      </button>
     );
   }
 
@@ -766,6 +789,7 @@ function DeleteTopic({ topic, onChanged, onError }) {
     </div>
   );
 }
+
 
 function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
   const { user } = useAuth();
@@ -815,15 +839,15 @@ function TopicPanel({ course, leads, topic, candidates, onChanged, onError }) {
   return (
     <div className="space-y-6">
       <Card>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-slate-900">{topic.title}</h2>
-            {topic.description && (
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">{topic.description}</p>
-            )}
+        <div>
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="min-w-0 text-lg font-semibold text-slate-900">{topic.title}</h2>
+            {leads && <DeleteTopic topic={topic} onChanged={onChanged} onError={onError} />}
           </div>
 
-          {leads && <DeleteTopic topic={topic} onChanged={onChanged} onError={onError} />}
+          {topic.description && (
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">{topic.description}</p>
+          )}
         </div>
 
         <div className="mt-4 border-t border-slate-100 pt-4">

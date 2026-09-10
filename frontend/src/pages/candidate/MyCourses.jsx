@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, openMaterial } from '../../lib/api';
-import { Alert, Badge, Button, Card, Empty, formatBytes } from '../../components/ui';
+import { Alert, Badge, Button, Card, Empty, Modal, formatBytes } from '../../components/ui';
 import TopicQuiz from './TopicQuiz';
 import { groupByCategory } from '../../lib/categories';
 import CourseSchedule from './CourseSchedule';
 import DiscontinueCourse from './DiscontinueCourse';
+import SessionRequest from './SessionRequest';
+import CourseFeedback from './CourseFeedback';
 import CategoryHeading from '../../components/CategoryHeading';
 
 /**
@@ -291,6 +293,24 @@ export default function MyCourses() {
 
               <TopicQuiz topicId={topic.id} onScored={loadCourses} />
 
+              {/* Asking for help sits at the end of the topic, where being
+                  stuck actually happens — after the material and after the
+                  quiz that just told you whether it landed. It was on the
+                  progress page, which is where you go to look at scores, long
+                  after the moment you needed a hand.
+
+                  Still one request per course rather than per topic: that is
+                  what the lead's inbox holds, and three open requests from one
+                  candidate on one course would be three notifications about
+                  the same conversation. The topic is named in the reason. */}
+              {openCourse && (
+                <SessionRequest
+                  courseId={openCourse.id}
+                  courseTitle={openCourse.title}
+                  topicTitle={topic.title}
+                />
+              )}
+
               {openCourse && (
                 <TopicStep
                   current={openSummary}
@@ -299,6 +319,20 @@ export default function MyCourses() {
                   onGo={setSelectedTopicId}
                 />
               )}
+
+              {/* On the last topic of a finished course, and nowhere else.
+                  Every quiz being done is not enough on its own: somebody can
+                  go back and reread topic one, and being asked to review the
+                  course while "Next topic →" is still on screen reads as
+                  though the course has ended when it has not. Asked as a line
+                  and a link rather than a form — the last thing on screen
+                  should not be four rows of stars demanding to be filled in. */}
+              {openCourse &&
+                !nextTopic &&
+                openCourse.gradedTopics > 0 &&
+                openCourse.doneTopics === openCourse.gradedTopics && (
+                  <ReviewPrompt course={openCourse} />
+                )}
             </div>
           )}
         </section>
@@ -428,6 +462,45 @@ function TopicStep({ current, previous, next, onGo }) {
 }
 
 /**
+ * The nudge to review a course you have just finished.
+ *
+ * A label and a link rather than the form itself: the form is four rows of
+ * stars and a comment box, and putting that at the foot of the last topic
+ * makes finishing feel like arriving at paperwork. The dialog holds the same
+ * form, so a review written here is the one that reads back on My progress.
+ */
+function ReviewPrompt({ course }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div>
+            <h3 className="font-semibold text-slate-900">How was this course?</h3>
+            <p className="mt-0.5 text-sm text-slate-500">
+              Your rating goes to the course lead, with your name.
+            </p>
+          </div>
+          <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+            Write a review
+          </Button>
+        </div>
+      </Card>
+
+      <Modal open={open} title={`Review ${course.code}`} onClose={() => setOpen(false)}>
+        <CourseFeedback
+          courseId={course.id}
+          courseTitle={course.title}
+          bare
+          onSaved={() => setOpen(false)}
+        />
+      </Modal>
+    </>
+  );
+}
+
+/**
  * What fills the pane before a course is opened.
  *
  * The alternative was an empty column and a sentence telling you to look left,
@@ -497,9 +570,12 @@ function CoursePicker({ courses, onStart, onChanged }) {
               </div>
             </div>
 
-            <CourseSchedule course={course} onChanged={onChanged} compact />
-
-            <DiscontinueCourse course={course} onChanged={onChanged} />
+            <CourseSchedule
+              course={course}
+              onChanged={onChanged}
+              compact
+              extra={<DiscontinueCourse course={course} onChanged={onChanged} />}
+            />
           </Card>
         );
       })}

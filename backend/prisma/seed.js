@@ -159,9 +159,9 @@ async function main() {
     });
 
     const record = existing
-      ? await prisma.topic.update({ where: { id: existing.id }, data: { ...topic, isPublished: true } })
+      ? await prisma.topic.update({ where: { id: existing.id }, data: topic })
       : await prisma.topic.create({
-          data: { ...topic, position, isPublished: true, courseId: course.id },
+          data: { ...topic, position, courseId: course.id },
         });
 
     topics.push(record);

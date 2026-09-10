@@ -45,7 +45,13 @@ const ITEMS = [
  * One entry per course, editable afterwards — feedback is a current opinion,
  * not a thread, so re-submitting replaces rather than appends.
  */
-export default function CourseFeedback({ courseId, courseTitle }) {
+/**
+ * `bare` drops the card and its heading, for callers that already provide
+ * both — a dialog whose title says what this is, say. The form itself is
+ * identical either way, so a review written in one place reads back in the
+ * other.
+ */
+export default function CourseFeedback({ courseId, courseTitle, bare = false, onSaved }) {
   const [existing, setExisting] = useState(null);
   const [editing, setEditing] = useState(false);
   const [scores, setScores] = useState({
@@ -104,6 +110,7 @@ export default function CourseFeedback({ courseId, courseTitle }) {
       });
       setExisting(feedback);
       setEditing(false);
+      onSaved?.(feedback);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -130,14 +137,21 @@ export default function CourseFeedback({ courseId, courseTitle }) {
 
   const showForm = editing || !existing;
 
-  return (
-    <Card accent="amber">
-      <h3 className="text-lg font-semibold text-slate-900">Your feedback</h3>
-      <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
-        How useful was this course? Your trainer sees this, along with your name.
-      </p>
+  const Shell = bare ? 'div' : Card;
+  const shellProps = bare ? {} : { accent: 'amber' };
 
-      <div className="mt-3">
+  return (
+    <Shell {...shellProps}>
+      {!bare && (
+        <>
+          <h3 className="text-lg font-semibold text-slate-900">Your feedback</h3>
+          <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
+            How useful was this course? Your trainer sees this, along with your name.
+          </p>
+        </>
+      )}
+
+      <div className={bare ? '' : 'mt-3'}>
         <Alert>{error}</Alert>
       </div>
 
@@ -228,7 +242,7 @@ export default function CourseFeedback({ courseId, courseTitle }) {
           </div>
         </div>
       )}
-    </Card>
+    </Shell>
   );
 }
 

@@ -35,7 +35,7 @@ export async function announceNewVersion(course) {
       course: { code: course.code, version: { lt: course.version } },
       // Staff on the course are not learners on it, and the ones who built the
       // new edition least of all.
-      user: { role: { in: ['candidate', 'lead'] } },
+      user: { role: { in: ['candidate', 'trainer', 'lead'] } },
     },
     select: { userId: true, course: { select: { version: true } } },
   });

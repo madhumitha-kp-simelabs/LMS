@@ -304,9 +304,6 @@ model Topic {
   position          Int // display order in the left-hand sidebar
   title             String
   description       String?
-  // Only the course's lead may set this. A team trainer writes the material and
-  // the quiz; releasing it to candidates is the lead's decision.
-  isPublished       Boolean  @default(false)
   // A topic is two pieces of work, and the lead may hand them to different
   // people: one writes the reading material, another sets the quiz. Either is
   // null while that half has not been handed out.
@@ -366,6 +363,17 @@ model ProjectAllotment {
   userId      String
   allottedBy  String
   allottedAt  DateTime  @default(now())
+  /**
+   * When the candidate first opened their project list after this was handed
+   * to them. Null means they have not seen it yet, which is what the count on
+   * the My projects tab is: new work, not outstanding work.
+   *
+   * Separate from completedAt on purpose — those answer different questions.
+   * A project can be seen and not done for weeks, and a badge that only
+   * cleared on completion would sit there nagging rather than telling anyone
+   * something they did not already know.
+   */
+  seenAt      DateTime?
   // Set when the candidate marks it finished, cleared if they undo that.
   completedAt DateTime?
 

@@ -41,6 +41,24 @@ export default function MyProjects() {
     load();
   }, [load]);
 
+  /**
+   * Clearing the badge, once — not on every reload.
+   *
+   * Marking as seen is a separate request from fetching the list so that a
+   * page which failed to render never reports work as read. The event is the
+   * one the header already listens for, so the count in the nav drops without
+   * a page change.
+   */
+  useEffect(() => {
+    api('/learn/projects/seen', { method: 'POST' })
+      .then(({ seen }) => {
+        if (seen > 0) window.dispatchEvent(new Event('inbox-changed'));
+      })
+      .catch(() => {
+        // A badge that stays up one page load longer is not worth an error.
+      });
+  }, []);
+
   async function setDone(project, done) {
     setBusyId(project.id);
     setError(null);
@@ -177,12 +195,19 @@ function YourWork({ project, onChanged, onError }) {
       <div className="mt-3 border-t border-slate-100 pt-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Your work</p>
-          <button
-            onClick={() => setEditing(true)}
-            className="text-xs text-indigo-600 underline hover:text-indigo-700"
-          >
-            {handedIn ? 'Change what you sent' : 'Add your work'}
-          </button>
+          {/* A hand-in is final. Once work has been sent it is what the lead
+              evaluates, and swapping it afterwards means a score can end up
+              attached to something other than the thing that earned it. */}
+          {handedIn ? (
+            <span className="text-xs text-slate-400">Handed in — this cannot be changed</span>
+          ) : (
+            <button
+              onClick={() => setEditing(true)}
+              className="text-xs text-indigo-600 underline hover:text-indigo-700"
+            >
+              Add your work
+            </button>
+          )}
         </div>
 
         {!handedIn ? (
@@ -366,15 +391,22 @@ function ProjectCard({ project, busy, onSetDone, onChanged, onError }) {
           <Feedback evaluation={project.evaluation} />
         </div>
 
-        <Button
-          variant={finished ? 'secondary' : 'primary'}
-          size="sm"
-          className="shrink-0"
-          disabled={busy}
-          onClick={() => onSetDone(project, !finished)}
-        >
-          {busy ? 'Saving…' : finished ? 'Not done after all' : 'Mark done'}
-        </Button>
+        {/* One way. Finishing is a claim the lead evaluates, so there is no
+            taking it back — the button becomes a statement of fact. */}
+        {finished ? (
+          <span className="shrink-0 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+            Marked done
+          </span>
+        ) : (
+          <Button
+            size="sm"
+            className="shrink-0"
+            disabled={busy}
+            onClick={() => onSetDone(project, true)}
+          >
+            {busy ? 'Saving…' : 'Mark done'}
+          </Button>
+        )}
       </div>
     </Card>
   );

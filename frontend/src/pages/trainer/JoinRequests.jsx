@@ -52,16 +52,16 @@ export default function JoinRequests({ courseId, topicCount, onChanged, onError 
       </div>
       <p className="mt-1 text-sm text-slate-500">
         {topicCount === 0 ? (
-          // Worth saying outright: approving somebody onto a course with
-          // nothing published leaves them enrolled and staring at an empty
-          // page, which looks broken from their side.
+          // Worth saying outright: approving somebody onto a course with no
+          // topics leaves them enrolled and staring at an empty page, which
+          // looks broken from their side.
           <>
-            Nothing is published yet, so approving enrols them without giving them anything to
-            open. Publish a topic and they get it automatically.
+            This course has no topics yet, so approving enrols them without giving them anything
+            to open. Add a topic and they get it automatically.
           </>
         ) : (
           <>
-            Approving gives access to all {topicCount} published topic
+            Approving gives access to all {topicCount} topic
             {topicCount === 1 ? '' : 's'} in this course. You can adjust it per topic afterwards.
           </>
         )}

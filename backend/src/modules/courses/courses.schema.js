@@ -34,7 +34,6 @@ export const updateCourseAdminSchema = createCourseSchema.partial();
 export const createTopicSchema = z.object({
   title: z.string().trim().min(3).max(200),
   description: z.string().trim().max(2000).optional(),
-  isPublished: z.boolean().optional(),
 });
 
 export const updateTopicSchema = createTopicSchema.partial();

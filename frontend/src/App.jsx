@@ -48,14 +48,14 @@ export default function App() {
 
               {/* Home stays a candidate's landing page — a lead already has
                   one at /trainer, and two competing homes is one too many. */}
-              <Route element={<ProtectedRoute roles={['candidate']} />}>
+              <Route element={<ProtectedRoute roles={['candidate', 'trainer', 'lead']} />}>
                 <Route path="/home" element={<CandidateHome />} />
               </Route>
 
               {/* The learner screens. Open to leads as well, who can be taught
                   a course they do not run; each one asks the API only about the
                   signed-in user, so the same page serves both. */}
-              <Route element={<ProtectedRoute roles={['candidate', 'lead']} />}>
+              <Route element={<ProtectedRoute roles={['candidate', 'trainer', 'lead']} />}>
                 <Route path="/browse" element={<BrowseCourses />} />
                 <Route path="/my-courses" element={<MyCourses />} />
                 <Route path="/my-progress" element={<MyProgress />} />

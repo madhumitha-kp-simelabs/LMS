@@ -147,7 +147,7 @@ export async function allottableFor(user, courseId) {
       status: 'active',
       supersededAt: null,
       discontinuedAt: null,
-      user: { isActive: true, role: { in: ['candidate', 'lead'] } },
+      user: { isActive: true, role: { in: ['candidate', 'trainer', 'lead'] } },
     },
     orderBy: { user: { fullName: 'asc' } },
     select: { user: { select: { id: true, fullName: true, email: true } } },
@@ -296,7 +296,7 @@ export async function allot(user, projectId, candidateIds) {
   // for topics. assertNotCourseStaff below is what stops one being set work on
   // their own course.
   const candidates = await prisma.user.findMany({
-    where: { id: { in: candidateIds }, role: { in: ['candidate', 'lead'] }, isActive: true },
+    where: { id: { in: candidateIds }, role: { in: ['candidate', 'trainer', 'lead'] }, isActive: true },
     select: { id: true },
   });
   if (candidates.length !== new Set(candidateIds).size) {
@@ -471,9 +471,30 @@ export async function listForCandidate(userId) {
 export async function setDone(userId, projectId, done) {
   const allotment = await mine(userId, projectId);
 
+  /**
+   * Finishing is one-way.
+   *
+   * It is a claim the lead then evaluates, so a candidate taking it back after
+   * a mark has been given would leave a score against work nobody is claiming
+   * to have finished. Un-marking also removed the row from the lead's review
+   * queue, which is a quiet way to withdraw something already being looked at.
+   *
+   * Marking again is not an error — the button is gone once it is done, so a
+   * repeat is a double submit or a stale tab, and the first date is the one
+   * that counts.
+   */
+  if (!done) {
+    throw new AppError(
+      409,
+      'A project cannot be un-marked once finished — ask your course lead if it needs reopening',
+    );
+  }
+
+  if (allotment.completedAt) return allotment;
+
   return prisma.projectAllotment.update({
     where: { id: allotment.id },
-    data: { completedAt: done ? new Date() : null },
+    data: { completedAt: new Date() },
     include: { project: { select: { id: true, title: true } } },
   });
 }
@@ -494,8 +515,27 @@ async function mine(userId, projectId) {
  * `submittedAt` is stamped the first time anything is attached and cleared only
  * when nothing is left, so the staff list can say "handed in" without guessing.
  */
+/**
+ * A hand-in is final.
+ *
+ * Once work has been sent it is what the lead evaluates, and letting a
+ * candidate swap it afterwards means a score can end up attached to something
+ * other than the thing that earned it — including after it has been marked.
+ * Adding to an empty hand-in is unaffected; this only refuses changing one
+ * that already exists.
+ */
+function assertNotHandedIn(allotment) {
+  if (allotment.submittedAt) {
+    throw new AppError(
+      409,
+      'You have already handed this in — ask your course lead if it needs to change',
+    );
+  }
+}
+
 export async function saveSubmission(userId, projectId, { url, note }) {
   const allotment = await mine(userId, projectId);
+  assertNotHandedIn(allotment);
 
   const submissionUrl = url?.trim() || null;
   const submissionNote = note?.trim() || null;
@@ -514,6 +554,7 @@ export async function saveSubmission(userId, projectId, { url, note }) {
 /** Attaching a file. Replacing one deletes the file it stood in for. */
 export async function attachFile(userId, projectId, file) {
   const allotment = await mine(userId, projectId);
+  assertNotHandedIn(allotment);
   const previous = allotment.fileUrl;
 
   const updated = await prisma.projectAllotment.update({
@@ -534,6 +575,7 @@ export async function attachFile(userId, projectId, file) {
 /** Removing the file, leaving any link and note in place. */
 export async function removeFile(userId, projectId) {
   const allotment = await mine(userId, projectId);
+  assertNotHandedIn(allotment);
   if (!allotment.fileUrl) throw new AppError(404, 'You have not attached a file');
 
   const stillHasSomething = Boolean(allotment.submissionUrl || allotment.submissionNote);

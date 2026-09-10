@@ -129,7 +129,7 @@ export default function CandidateDetail() {
 
 const BackLink = () => (
   <Link to="/admin" className="text-sm text-indigo-600 hover:text-indigo-700">
-    ← Administration
+    ← Dashboard
   </Link>
 );
 
