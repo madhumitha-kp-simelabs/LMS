@@ -108,8 +108,7 @@ export default function AllProjects() {
     <div>
       <h1 className="text-xl font-semibold text-slate-900">Projects</h1>
       <p className="mt-1 max-w-2xl text-sm text-slate-500">
-        Every project set across the organisation. You can change the ones on courses you lead;
-        the rest are here so you can see what is already being asked of people.
+        The practical work set across the courses you lead.
       </p>
 
       <div className="mt-6 space-y-4">
@@ -138,7 +137,9 @@ export default function AllProjects() {
               <div className="w-56">
                 <Select value={scope} onChange={(event) => setScope(event.target.value)}>
                   <option value="all">Every course</option>
-                  <option value="mine">Courses I lead ({mine})</option>
+                  {mine !== (projects ?? []).length && (
+                    <option value="mine">Courses I lead ({mine})</option>
+                  )}
                   <option value="review">Waiting to be reviewed</option>
                   <option value="unallotted">Not given out yet</option>
                 </Select>

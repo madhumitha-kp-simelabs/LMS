@@ -358,6 +358,74 @@ function ProjectRow({
   );
 }
 
+/**
+ * What one candidate handed in, beside their name. A link opens in a tab; a
+ * file is fetched with the token and handed to the browser, since a plain href
+ * cannot authenticate.
+ */
+function Work({ projectId, candidate, onError }) {
+  const { submission } = candidate;
+
+  if (!submission.submittedAt) {
+    return <span className="text-xs text-slate-400">nothing handed in</span>;
+  }
+
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+      {submission.url && (
+        <a
+          href={submission.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="max-w-xs truncate text-indigo-600 underline hover:text-indigo-700"
+          title={submission.url}
+        >
+          {submission.url.replace(/^https?:\/\//, '')}
+        </a>
+      )}
+
+      {submission.filename && (
+        <button
+          onClick={() => openProjectFile(projectId, candidate.id).catch((e) => onError(e.message))}
+          className="text-indigo-600 underline hover:text-indigo-700"
+        >
+          {submission.filename}
+        </button>
+      )}
+
+      {submission.note && (
+        <span className="max-w-md text-slate-500" title={submission.note}>
+          “{submission.note.length > 80 ? `${submission.note.slice(0, 80)}…` : submission.note}”
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Where the lead's judgement stands on one candidate's work, in the smallest
+ * space that carries it. The detail — the feedback itself — lives on the Work
+ * handed in screen; this list is for scanning.
+ */
+function Mark({ evaluation, handedIn }) {
+  if (!evaluation.evaluatedAt) {
+    // Nothing handed in and nothing marked is the ordinary state, not news.
+    return handedIn ? <span className="text-xs text-amber-700">to review</span> : null;
+  }
+
+  return (
+    <span
+      className={`text-xs font-medium ${
+        evaluation.score != null && evaluation.score < 50 ? 'text-rose-700' : 'text-emerald-700'
+      }`}
+      title={evaluation.feedback ?? undefined}
+    >
+      {evaluation.score == null ? 'reviewed' : `${evaluation.score}/100`}
+    </span>
+  );
+}
+
+/** One form for both adding and editing — the fields are the same either way. */
 function ProjectForm({ project, busy, candidates = [], onSave, onCancel }) {
   const [form, setForm] = useState({
     title: project?.title ?? '',

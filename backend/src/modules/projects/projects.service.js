@@ -630,7 +630,21 @@ export async function listEverything(user) {
     throw new AppError(403, 'Only leads and administrators see across courses');
   }
 
+  /**
+   * A lead sees the work on their own courses; an administrator sees all of it.
+   *
+   * This used to hand every lead every project in the organisation, on the
+   * argument that knowing what else is being asked of the same candidates
+   * stops two courses setting the same task. In practice it was a page of
+   * other people's course design that the reader could not act on — no edit,
+   * no allotment, nothing to do but read it. Answering "what is the whole
+   * programme asking of people" is an administrator's job, and they still get
+   * that view.
+   */
+  const mine = user.role === 'admin' ? {} : { course: { ownerId: user.id } };
+
   const projects = await prisma.project.findMany({
+    where: mine,
     orderBy: [{ course: { code: 'asc' } }, { course: { version: 'asc' } }, { position: 'asc' }],
     include: {
       course: {

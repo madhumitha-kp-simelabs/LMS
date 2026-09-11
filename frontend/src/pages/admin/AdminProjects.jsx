@@ -193,6 +193,8 @@ export default function AdminProjects() {
                 </div>
               </section>
             ))}
+
+            <Results projects={projects} />
           </>
         )}
       </div>
@@ -210,8 +212,114 @@ const Heading = () => (
   </div>
 );
 
+/**
+ * Every marked submission across the organisation, in one place.
+ *
+ * Kept off the project cards on purpose. A card answers "who is doing this and
+ * who still needs it" — an allotment question — and a mark is the answer to a
+ * different one: how the work turned out. Threading results through the cards
+ * meant reading twenty of them to find the four that had been marked.
+ *
+ * Read-only. Marking is the lead's; an administrator who could edit it would
+ * put their own words under somebody else's name.
+ */
+function Results({ projects }) {
+  const withMarks = projects
+    .map((project) => ({
+      project,
+      marked: project.candidates.filter((c) => c.evaluation?.evaluatedAt),
+    }))
+    .filter((row) => row.marked.length > 0);
+
+  // Work sitting unmarked is the other half of the picture, and the half an
+  // administrator might act on.
+  const waiting = projects.reduce(
+    (sum, project) =>
+      sum + project.candidates.filter((c) => c.handedInAt && !c.evaluation?.evaluatedAt).length,
+    0,
+  );
+
+  if (withMarks.length === 0 && waiting === 0) return null;
+
+  const total = withMarks.reduce((sum, row) => sum + row.marked.length, 0);
+
+  return (
+    <section>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+        <h2 className="text-lg font-semibold text-slate-900">Results</h2>
+        <p className="text-sm text-slate-500">
+          {total === 0 ? 'Nothing marked yet' : `${plural(total, 'submission')} marked`}
+          {waiting > 0 && (
+            <span className="font-medium text-amber-700"> · {waiting} waiting to be marked</span>
+          )}
+        </p>
+      </div>
+
+      {withMarks.length === 0 ? (
+        <div className="mt-3">
+          <Empty>Work has been handed in, but none of it has been marked yet.</Empty>
+        </div>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {withMarks.map(({ project, marked }) => (
+            <Card key={project.id} flush>
+              <div className="border-b border-slate-100 px-5 py-3">
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-xs font-semibold tracking-wide text-indigo-600">
+                    {project.course.code} v{project.course.version}
+                  </span>
+                  <span className="font-medium text-slate-900">{project.title}</span>
+                </span>
+              </div>
+
+              <ul className="divide-y divide-slate-100">
+                {marked.map((candidate) => (
+                  <li key={candidate.id} className="px-5 py-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                      <span className="text-sm font-medium text-slate-900">
+                        {candidate.fullName}
+                      </span>
+                      <span className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                        {candidate.evaluation.score != null && (
+                          <span
+                            className={`text-sm font-semibold tabular-nums ${
+                              candidate.evaluation.score < 50 ? 'text-rose-700' : 'text-emerald-700'
+                            }`}
+                          >
+                            {candidate.evaluation.score}/100
+                          </span>
+                        )}
+                        <span className="text-slate-400">
+                          {candidate.evaluation.evaluatedBy ?? 'the course lead'}
+                          {candidate.evaluation.evaluatedAt &&
+                            ` · ${formatDate(candidate.evaluation.evaluatedAt)}`}
+                        </span>
+                      </span>
+                    </div>
+
+                    {candidate.evaluation.feedback ? (
+                      <p className="mt-1.5 whitespace-pre-line border-l-2 border-slate-200 pl-3 text-sm leading-relaxed text-slate-700">
+                        {candidate.evaluation.feedback}
+                      </p>
+                    ) : (
+                      // A score with no words is a different thing from words
+                      // that failed to load.
+                      <p className="mt-1 text-xs text-slate-400">Marked without a comment.</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ProjectCard({ project, candidates, busy, onGive, onTakeBack, onDelete }) {
   const holding = new Set(project.candidates.map((c) => c.id));
+
   const spare = candidates.filter((c) => !holding.has(c.id));
 
   return (

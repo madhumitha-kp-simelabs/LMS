@@ -352,15 +352,20 @@ function CategoryManager({ categories, busy, onAdd, onRename, onRemove }) {
 
   return (
     <Card>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div>
+      <div className="flex items-start justify-between gap-x-4">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-slate-900">Categories</h2>
           <p className="mt-0.5 text-sm text-slate-500">
             What a course is about. Every course list groups by these.
           </p>
         </div>
 
-        <Button variant="secondary" size="sm" onClick={() => setOpen((was) => !was)}>
+        <Button
+          variant={open ? 'secondary' : 'subtle'}
+          size="sm"
+          className="shrink-0"
+          onClick={() => setOpen((was) => !was)}
+        >
           {open ? 'Done' : 'Manage'}
         </Button>
       </div>

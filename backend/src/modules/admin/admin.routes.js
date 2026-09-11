@@ -488,7 +488,12 @@ router.get(
         course: { select: { id: true, code: true, version: true, title: true, isPublished: true } },
         allotments: {
           orderBy: { allottedAt: 'asc' },
-          include: { user: { select: { id: true, fullName: true, email: true } } },
+          include: {
+            user: { select: { id: true, fullName: true, email: true } },
+            // Who marked it, so a comment carries an author rather than
+            // appearing from nowhere.
+            evaluator: { select: { id: true, fullName: true } },
+          },
         },
       },
     });
@@ -502,9 +507,27 @@ router.get(
           email: a.user.email,
           allottedAt: a.allottedAt,
           completedAt: a.completedAt,
+          handedInAt: a.submittedAt,
+          /**
+           * The lead's mark and their words on it.
+           *
+           * Always an object, so the screen can read `evaluation.score`
+           * without testing for its existence first; `evaluatedAt` is the
+           * flag for whether anybody has looked yet. The two halves are
+           * independent — a score with no comment, or a comment with no
+           * score — so neither implies the other.
+           */
+          evaluation: {
+            score: a.score,
+            feedback: a.feedback,
+            evaluatedAt: a.evaluatedAt,
+            evaluatedBy: a.evaluator?.fullName ?? null,
+          },
         })),
         allotted: allotments.length,
         completed: allotments.filter((a) => a.completedAt).length,
+        handedIn: allotments.filter((a) => a.submittedAt).length,
+        evaluated: allotments.filter((a) => a.evaluatedAt).length,
       })),
     });
   }),
